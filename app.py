@@ -675,7 +675,8 @@ def _build_uc_sources(custom_pricing=None):
 # ---------------------------------------------------------------------------
 # Reports
 # ---------------------------------------------------------------------------
-def generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted):
+def generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted,
+                         impl_cdu=0, rec_anual=0, cdu_result=None, cdu_tag=""):
     def _make_bar_chart(sc_filter, sc_color):
         buf = io.BytesIO()
         row = df[df["scenario"].str.contains(sc_filter, case=False)].iloc[0]
@@ -719,6 +720,7 @@ def generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor
         buf.seek(0)
         return buf
 
+    from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS
     buf_left_eco = _make_bar_chart("Economico", "#27ae60")
     buf_left_ideal = _make_bar_chart("Ideal", "#2c6b9e")
     buf_right = _make_total_chart()
@@ -789,6 +791,68 @@ tr:nth-child(odd) {{ background: #fff; }}
 <tr><th>{t("Scenario")}</th><th>{t("Total (EUR)")}</th><th>{t("Annual (EUR)")}</th><th>{t("GPU Cost (EUR)")}</th><th>{t("API LLM (EUR)")}</th><th>{t("Peak Nodes")}</th></tr>""" + \
     "".join(f"<tr><td>{r['scenario']}</td><td>{r['total_cost_eur']:,.0f}</td><td>{r['total_cost_eur']*12:,.0f}</td><td>{r['aks_gpu_cost_eur']:,.0f}</td><td>{r['api_llm_cost_eur']:,.0f}</td><td>{r['gpu_peak_nodes']}</td></tr>" for _, r in df.iterrows()) + \
     """</table>
+
+<h2>CdU — Caso de Uso</h2>
+<p style="font-size:0.75rem;background:#eef5ff;padding:4px 8px;border-radius:4px;">""" + cdu_tag + """</p>
+<table>
+<tr><th>Concepto</th><th>Importe</th></tr>
+<tr><td>Integración de fuentes (CAPEX)</td><td>{:,.0f} €</td></tr>
+<tr><td>Capacidades (CAPEX)</td><td>{:,.0f} €</td></tr>
+<tr><td>ENS / Cumplimiento (CAPEX)</td><td>{:,.0f} €</td></tr>
+<tr><td style="font-weight:bold">Total implantación (CAPEX)</td><td style="font-weight:bold">{:,.0f} €</td></tr>
+<tr><td>Mantenimiento fuentes (OPEX/mes)</td><td>{:,.0f} €</td></tr>
+<tr><td>Capacidades (OPEX/mes)</td><td>{:,.0f} €</td></tr>
+<tr><td style="font-weight:bold">Total recurrente/mes</td><td style="font-weight:bold">{:,.0f} €</td></tr>
+<tr><td style="font-weight:bold">Total recurrente/año</td><td style="font-weight:bold">{:,.0f} €</td></tr>
+</table>
+""".format(
+    cdu_result.source_integration_capex if cdu_result else 0,
+    cdu_result.capabilities_capex if cdu_result else 0,
+    cdu_result.compliance_capex if cdu_result else 0,
+    impl_cdu,
+    cdu_result.source_maintenance_opex if cdu_result else 0,
+    cdu_result.capabilities_opex if cdu_result else 0,
+    (cdu_result.source_maintenance_opex + cdu_result.capabilities_opex) if cdu_result else 0,
+    rec_anual,
+) + """
+
+<h2>CdU — Fuentes</h2>
+<table>
+<tr><th>Fuente</th><th>Cantidad</th><th>Vol. (GB)</th><th>Frecuencia</th></tr>""" + \
+"".join(f"<tr><td>{k}</td><td>{st.session_state.get(f'_uc_src_{k}_cnt', 0)}</td>"
+        f"<td>{st.session_state.get(f'_uc_src_{k}_vol', 10.0)}</td>"
+        f"<td>{st.session_state.get(f'_uc_src_{k}_freq', 'daily')}</td></tr>"
+        for k in ["sharepoint","database","web_scraping","api","pdf_dynamic"]
+        if st.session_state.get(f"_uc_src_{k}_cnt", 0) > 0) + \
+"""</table>
+
+<h2>CdU — Precios</h2>
+<table>
+<tr><th>Concepto</th><th>Valor</th></tr>""" + \
+"".join(
+    "<tr><td>{}</td><td>{}</td></tr>".format(
+        {"sharepoint":"SharePoint/Alfresco","database":"BD Oracle/SQL",
+         "web_scraping":"Web Scraping","api":"API REST","pdf_dynamic":"PDF Dinámico"}[sk] + f" ({cmp})",
+        f"{_gs(f'_cdu_src_{sk}_{cmp}', SOURCE_INTEGRATION_TABLE[sk][cmp]):,.0f} €"
+    )
+    for sk in ["sharepoint","database","web_scraping","api","pdf_dynamic"]
+    for cmp in ["low","medium","high"]
+) + \
+"".join(
+    f"<tr><td>Multiplicador frecuencia {fl}</td><td>{_gs(f'_cdu_freq_{fk}', fv):.2f}</td></tr>"
+    for fk, fv in {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}.items()
+) + \
+"".join(
+    f"<tr><td>Capacidad {cl} CAPEX</td><td>{_gs(f'_cdu_cap_{ck}_capex', CAPABILITY_COSTS[ck]['capex']):,.0f} €</td></tr>"
+    f"<tr><td>Capacidad {cl} OPEX/mes</td><td>{_gs(f'_cdu_cap_{ck}_opex', CAPABILITY_COSTS[ck]['opex_monthly']):,.0f} €</td></tr>"
+    for ck, cl in [("agentic_ai","IA Agéntica"),("anonymization","Anonimización"),("sso","SSO")]
+) + \
+"".join(
+    f"<tr><td>ENS {el} CAPEX</td><td>{_gs(f'_cdu_ens_{ek}_capex', ENS_COSTS[ek]['capex']):,.0f} €</td></tr>"
+    for ek, el in [("none","Ninguno"),("basic","Básico"),("medium","Medio"),("high","Alto")]
+) + \
+f"""<tr><td>Mantenimiento anual</td><td>{_gs('_cdu_maintenance_pct', 10.0):.1f} %</td></tr>
+</table>
 <div class="footer">Azure AKS + LLM Cost Simulator</div>
 </body></html>"""
 
@@ -796,7 +860,7 @@ tr:nth-child(odd) {{ background: #fff; }}
 # ---------------------------------------------------------------------------
 # Simulation tab
 # ---------------------------------------------------------------------------
-def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0):
+def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0, cdu_result=None, cdu_tag=""):
     lp = data["load_profile"]
     mc_iterations = _gs("mc_iterations", 5000)
     ha_factor = _gs("ha_factor", 1.15)
@@ -1017,7 +1081,8 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True, type="primary")
         with col_html:
-            html_data = generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted)
+            html_data = generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted,
+                                              impl_cdu=impl_cdu, rec_anual=rec_anual, cdu_result=cdu_result, cdu_tag=cdu_tag)
             st.download_button("📄 Exportar HTML", html_data, "simulation_report.html", mime="text/html",
                                use_container_width=True, type="primary")
 
@@ -1292,7 +1357,8 @@ def main():
 
     with st.container(border=True):
         st.markdown("**Infraestructura Cloud — Simulación**")
-        tab_simulation(data, df=df_infra, df_totales=df_totales, impl_cdu=impl_cdu, rec_anual=rec_anual)
+        tab_simulation(data, df=df_infra, df_totales=df_totales, impl_cdu=impl_cdu, rec_anual=rec_anual,
+                       cdu_result=cdu_result, cdu_tag=cdu_tag)
 
     with st.expander("Precios y simulación"):
         tab_infra, tab_cdu = st.tabs(["Infra/Cloud", "CdU"])
