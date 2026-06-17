@@ -156,6 +156,10 @@ def monte_carlo_scenario(
 def simulate_all(
     data: dict,
     mc_iterations: int = 10_000,
+    traffic_var: float = 0.20,
+    peak_var: float = 0.30,
+    throughput_var: float = 0.10,
+    pricing_var: float = 0.05,
     ha_factor: float = 1.15,
     overhead_factor: float = 0.1,
     resize: bool = False,
@@ -187,6 +191,10 @@ def simulate_all(
         dist = monte_carlo_scenario(
             infra, api_cfg, load,
             iterations=mc_iterations,
+            traffic_var=traffic_var,
+            peak_var=peak_var,
+            throughput_var=throughput_var,
+            pricing_var=pricing_var,
             ha_factor=ha_factor,
             overhead_factor=overhead_factor,
             progress_callback=_mc_progress,

@@ -385,6 +385,28 @@ STATE_DEFAULTS = {
     "mc_iterations": 5000,
     "ha_factor": 1.15,
     "overhead_factor": 0.1,
+    "mc_traffic_var": 0.20,
+    "mc_peak_var": 0.30,
+    "mc_throughput_var": 0.10,
+    "mc_pricing_var": 0.05,
+    "ideal_system_vm": "Standard_D8ds_v5",
+    "ideal_system_nodes": 1,
+    "ideal_gpu_vm": "Standard_NC24ads_A100_v4",
+    "ideal_base_nodes": 3,
+    "ideal_peak_nodes": 10,
+    "ideal_off_nodes": 1,
+    "ideal_base_replicas": 3,
+    "ideal_peak_replicas": 10,
+    "ideal_off_replicas": 1,
+    "eco_system_vm": "Standard_D8ds_v5",
+    "eco_system_nodes": 1,
+    "eco_gpu_vm": "Standard_NV12ads_A10_v5",
+    "eco_base_nodes": 5,
+    "eco_peak_nodes": 20,
+    "eco_off_nodes": 1,
+    "eco_base_replicas": 5,
+    "eco_peak_replicas": 20,
+    "eco_off_replicas": 1,
     "lang": "ES",
     "_preset_sel": "750",
     "_uc_ens": "medium",
@@ -556,20 +578,20 @@ def build_data_from_ui() -> dict:
 
     infra_ideal = AKSInfrastructure(name="LLM on AKS (Ideal UX)")
     infra_ideal.system_nodepool = NodepoolConfig(
-        vm_type="Standard_D8ds_v5", base_office_nodes=1,
+        vm_type=_gs("ideal_system_vm", "Standard_D8ds_v5"), base_office_nodes=_gs("ideal_system_nodes", 1),
         price_per_hour=_gs("system_price", DEFAULT_SYSTEM_PRICE),
     )
     infra_ideal.inference_nodepool = NodepoolConfig(
-        vm_type="Standard_NC24ads_A100_v4",
-        base_office_nodes=3, peak_nodes=10, off_hours_nodes=1,
+        vm_type=_gs("ideal_gpu_vm", "Standard_NC24ads_A100_v4"),
+        base_office_nodes=_gs("ideal_base_nodes", 3), peak_nodes=_gs("ideal_peak_nodes", 10), off_hours_nodes=_gs("ideal_off_nodes", 1),
         price_per_hour=_gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE),
     )
     infra_ideal.throughput_tok_s_per_pod = _gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT)
     infra_ideal.gpu_utilization = _gs("gpu_utilization", DEFAULT_GPU_UTILIZATION)
     infra_ideal.safety_factor = _gs("safety_factor", DEFAULT_SAFETY_FACTOR)
-    infra_ideal.base_replicas = 3
-    infra_ideal.peak_replicas = 10
-    infra_ideal.off_hours_replicas = 1
+    infra_ideal.base_replicas = _gs("ideal_base_replicas", 3)
+    infra_ideal.peak_replicas = _gs("ideal_peak_replicas", 10)
+    infra_ideal.off_hours_replicas = _gs("ideal_off_replicas", 1)
     infra_ideal.storage_cost_per_month = _gs("ideal_storage", DEFAULT_STORAGE_IDEAL)
     infra_ideal.lb_cost_per_month = _gs("ideal_lb", DEFAULT_LB)
     infra_ideal.monitor_cost_per_month = _gs("ideal_monitor", DEFAULT_MONITOR_IDEAL)
@@ -577,20 +599,20 @@ def build_data_from_ui() -> dict:
 
     infra_economy = AKSInfrastructure(name="LLM on AKS (Economy UX)")
     infra_economy.system_nodepool = NodepoolConfig(
-        vm_type="Standard_D8ds_v5", base_office_nodes=1,
+        vm_type=_gs("eco_system_vm", "Standard_D8ds_v5"), base_office_nodes=_gs("eco_system_nodes", 1),
         price_per_hour=_gs("system_price", DEFAULT_SYSTEM_PRICE),
     )
     infra_economy.inference_nodepool = NodepoolConfig(
-        vm_type="Standard_NV12ads_A10_v5",
-        base_office_nodes=5, peak_nodes=20, off_hours_nodes=1,
+        vm_type=_gs("eco_gpu_vm", "Standard_NV12ads_A10_v5"),
+        base_office_nodes=_gs("eco_base_nodes", 5), peak_nodes=_gs("eco_peak_nodes", 20), off_hours_nodes=_gs("eco_off_nodes", 1),
         price_per_hour=_gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE),
     )
     infra_economy.throughput_tok_s_per_pod = _gs("eco_throughput", DEFAULT_ECO_THROUGHPUT)
     infra_economy.gpu_utilization = _gs("gpu_utilization", DEFAULT_GPU_UTILIZATION)
     infra_economy.safety_factor = _gs("safety_factor", DEFAULT_SAFETY_FACTOR)
-    infra_economy.base_replicas = 5
-    infra_economy.peak_replicas = 20
-    infra_economy.off_hours_replicas = 1
+    infra_economy.base_replicas = _gs("eco_base_replicas", 5)
+    infra_economy.peak_replicas = _gs("eco_peak_replicas", 20)
+    infra_economy.off_hours_replicas = _gs("eco_off_replicas", 1)
     infra_economy.storage_cost_per_month = _gs("eco_storage", DEFAULT_STORAGE_ECO)
     infra_economy.lb_cost_per_month = _gs("eco_lb", DEFAULT_LB)
     infra_economy.monitor_cost_per_month = _gs("eco_monitor", DEFAULT_MONITOR_ECO)
@@ -865,6 +887,10 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
     mc_iterations = _gs("mc_iterations", 5000)
     ha_factor = _gs("ha_factor", 1.15)
     overhead_factor = _gs("overhead_factor", 0.1)
+    mc_traffic_var = _gs("mc_traffic_var", 0.20)
+    mc_peak_var = _gs("mc_peak_var", 0.30)
+    mc_throughput_var = _gs("mc_throughput_var", 0.10)
+    mc_pricing_var = _gs("mc_pricing_var", 0.05)
 
     cols = st.columns(5)
     with cols[0]:
@@ -883,6 +909,10 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
             df = simulate_all(
                 data,
                 mc_iterations=mc_iterations,
+                traffic_var=mc_traffic_var,
+                peak_var=mc_peak_var,
+                throughput_var=mc_throughput_var,
+                pricing_var=mc_pricing_var,
                 ha_factor=ha_factor,
                 overhead_factor=overhead_factor,
                 resize=True,
@@ -1270,6 +1300,10 @@ def main():
     ens_level = st.session_state.get("_uc_ens", "medium")
 
     mc_iter = _gs("mc_iterations", 5000)
+    mc_traffic_var = _gs("mc_traffic_var", 0.20)
+    mc_peak_var = _gs("mc_peak_var", 0.30)
+    mc_throughput_var = _gs("mc_throughput_var", 0.10)
+    mc_pricing_var = _gs("mc_pricing_var", 0.05)
     cdu_result = calculate_usecase_cost(sources, enabled_caps, ens_level, business_params=None, deployment="economy",
                                          capability_costs=cap_costs, ens_costs=ens_costs)
     impl_cdu = cdu_result.total_capex
@@ -1279,7 +1313,10 @@ def main():
     with st.container(border=True):
         st.markdown("**Costes combinados — CdU + Infraestructura Cloud**")
         with st.spinner("Simulando infraestructura cloud..."):
-            df_infra = simulate_all(data, mc_iterations=mc_iter, resize=True)
+            df_infra = simulate_all(data, mc_iterations=mc_iter,
+                                     traffic_var=mc_traffic_var, peak_var=mc_peak_var,
+                                     throughput_var=mc_throughput_var, pricing_var=mc_pricing_var,
+                                     resize=True)
 
         total_src = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
         caps_names = []
@@ -1364,36 +1401,80 @@ def main():
         tab_infra, tab_cdu = st.tabs(["Infra/Cloud", "CdU"])
 
         with tab_infra:
-            st.caption("Precios obtenidos de Azure Retail Prices API (West Europe). No configurables.")
-            ic1, ic2, ic3 = st.columns(3)
-            with ic1:
-                st.metric("A100 GPU/h", f"{_gs('ideal_gpu_price', DEFAULT_IDEAL_GPU_PRICE):.2f} €")
-                st.metric("A10 GPU/h", f"{_gs('eco_gpu_price', DEFAULT_ECO_GPU_PRICE):.2f} €")
-                st.metric("Nodo sistema/h", f"{_gs('system_price', DEFAULT_SYSTEM_PRICE):.2f} €")
-            with ic2:
-                st.metric("Modelo API", _gs("api_model", DEFAULT_API_MODEL))
-                st.metric("Input $/1M tok", f"{_gs('api_input_price', DEFAULT_API_INPUT_PRICE):.2f}")
-                st.metric("Output $/1M tok", f"{_gs('api_output_price', DEFAULT_API_OUTPUT_PRICE):.2f}")
-            with ic3:
-                st.metric("EUR/USD", f"{_gs('eur_usd_rate', DEFAULT_EUR_USD):.2f}")
-                st.metric("HA factor", f"{_gs('ha_factor', 1.15):.2f}")
-                st.metric("Overhead pico", f"{_gs('overhead_factor', 0.1):.0%}")
-            st.caption("Rendimiento y costes fijos")
-            ic4, ic5 = st.columns(2)
-            with ic4:
-                st.metric("A100 tok/s", str(_gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT)))
-                st.metric("A10 tok/s", str(_gs("eco_throughput", DEFAULT_ECO_THROUGHPUT)))
-                st.metric("Utilización GPU", f"{_gs('gpu_utilization', DEFAULT_GPU_UTILIZATION):.0%}")
-                st.metric("Factor seguridad", f"{_gs('safety_factor', DEFAULT_SAFETY_FACTOR):.2f}")
-                st.metric("MC iteraciones", str(_gs("mc_iterations", 5000)))
-            with ic5:
-                st.metric("Storage Ideal/mes", f"{int(_gs('ideal_storage', DEFAULT_STORAGE_IDEAL))} €")
-                st.metric("Storage Eco/mes", f"{int(_gs('eco_storage', DEFAULT_STORAGE_ECO))} €")
-                st.metric("LB/mes", f"{int(_gs('ideal_lb', DEFAULT_LB))} €")
-                st.metric("Monitor Ideal/mes", f"{int(_gs('ideal_monitor', DEFAULT_MONITOR_IDEAL))} €")
-                st.metric("Monitor Eco/mes", f"{int(_gs('eco_monitor', DEFAULT_MONITOR_ECO))} €")
-                st.metric("ACR Ideal/mes", f"{int(_gs('ideal_acr', DEFAULT_ACR_IDEAL))} €")
-                st.metric("ACR Eco/mes", f"{int(_gs('eco_acr', DEFAULT_ACR_ECO))} €")
+            st.caption("Puedes sobrescribir cualquier valor — los precios Azure obtenidos vía API son la referencia inicial.")
+            with st.expander("Precios GPU / Sistema / API", expanded=True):
+                ic1, ic2, ic3 = st.columns(3)
+                with ic1:
+                    st.number_input("A100 GPU/h", 0.01, 50.0, value=_gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE), key="ideal_gpu_price", step=0.1, format="%.2f")
+                    st.number_input("A10 GPU/h", 0.01, 50.0, value=_gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE), key="eco_gpu_price", step=0.1, format="%.2f")
+                    st.number_input("Nodo sistema/h", 0.01, 10.0, value=_gs("system_price", DEFAULT_SYSTEM_PRICE), key="system_price", step=0.01, format="%.2f")
+                with ic2:
+                    st.text_input("Modelo API", value=_gs("api_model", DEFAULT_API_MODEL), key="api_model")
+                    st.number_input("Input $/1M tok", 0.0, 100.0, value=_gs("api_input_price", DEFAULT_API_INPUT_PRICE), key="api_input_price", step=0.1, format="%.2f")
+                    st.number_input("Output $/1M tok", 0.0, 100.0, value=_gs("api_output_price", DEFAULT_API_OUTPUT_PRICE), key="api_output_price", step=0.1, format="%.2f")
+                with ic3:
+                    st.number_input("EUR/USD", 0.5, 2.0, value=_gs("eur_usd_rate", DEFAULT_EUR_USD), key="eur_usd_rate", step=0.01, format="%.2f")
+                    st.number_input("HA factor", 1.0, 2.0, value=_gs("ha_factor", 1.15), key="ha_factor", step=0.01, format="%.2f")
+                    st.number_input("Overhead pico", 0.0, 1.0, value=_gs("overhead_factor", 0.1), key="overhead_factor", step=0.05, format="%.2f")
+
+            with st.expander("Rendimiento y dimensionamiento", expanded=True):
+                ic4, ic5 = st.columns(2)
+                with ic4:
+                    st.number_input("A100 tok/s", 1, 2000, value=_gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT), key="ideal_throughput", step=10)
+                    st.number_input("A10 tok/s", 1, 1000, value=_gs("eco_throughput", DEFAULT_ECO_THROUGHPUT), key="eco_throughput", step=10)
+                    st.slider("Utilización GPU", 0.0, 1.0, value=_gs("gpu_utilization", DEFAULT_GPU_UTILIZATION), key="gpu_utilization", step=0.05)
+                    st.number_input("Factor seguridad", 0.0, 2.0, value=_gs("safety_factor", DEFAULT_SAFETY_FACTOR), key="safety_factor", step=0.05)
+                    st.number_input("MC iteraciones", 100, 50000, value=_gs("mc_iterations", 5000), key="mc_iterations", step=100)
+                with ic5:
+                    st.number_input("Storage Ideal/mes", 0, 10000, value=int(_gs("ideal_storage", DEFAULT_STORAGE_IDEAL)), key="ideal_storage", step=10)
+                    st.number_input("Storage Eco/mes", 0, 10000, value=int(_gs("eco_storage", DEFAULT_STORAGE_ECO)), key="eco_storage", step=10)
+                    st.number_input("LB/mes", 0, 1000, value=int(_gs("ideal_lb", DEFAULT_LB)), key="ideal_lb", step=5)
+                    st.number_input("Monitor Ideal/mes", 0, 2000, value=int(_gs("ideal_monitor", DEFAULT_MONITOR_IDEAL)), key="ideal_monitor", step=10)
+                    st.number_input("Monitor Eco/mes", 0, 2000, value=int(_gs("eco_monitor", DEFAULT_MONITOR_ECO)), key="eco_monitor", step=10)
+                    st.number_input("ACR Ideal/mes", 0, 2000, value=int(_gs("ideal_acr", DEFAULT_ACR_IDEAL)), key="ideal_acr", step=10)
+                    st.number_input("ACR Eco/mes", 0, 2000, value=int(_gs("eco_acr", DEFAULT_ACR_ECO)), key="eco_acr", step=10)
+
+            with st.expander("Variación Monte Carlo"):
+                st.caption("Coeficientes de variación para la simulación Monte Carlo. A mayor valor, mayor dispersión de resultados.")
+                mc1, mc2 = st.columns(2)
+                with mc1:
+                    st.slider("Variación tráfico", 0.0, 0.5, value=_gs("mc_traffic_var", 0.20), key="mc_traffic_var", step=0.05)
+                    st.slider("Variación pico", 0.0, 0.5, value=_gs("mc_peak_var", 0.30), key="mc_peak_var", step=0.05)
+                with mc2:
+                    st.slider("Variación rendimiento", 0.0, 0.5, value=_gs("mc_throughput_var", 0.10), key="mc_throughput_var", step=0.05)
+                    st.slider("Variación precios", 0.0, 0.5, value=_gs("mc_pricing_var", 0.05), key="mc_pricing_var", step=0.05)
+
+            with st.expander("Configuración de nodos — Escenario Ideal"):
+                st.caption("VM y dimensionado de nodos para el escenario AKS Ideal (A100).")
+                ic_id1, ic_id2, ic_id3 = st.columns(3)
+                with ic_id1:
+                    st.text_input("VM sistema", value=_gs("ideal_system_vm", "Standard_D8ds_v5"), key="ideal_system_vm")
+                    st.number_input("Nodos sistema", 0, 10, value=_gs("ideal_system_nodes", 1), key="ideal_system_nodes")
+                with ic_id2:
+                    st.text_input("VM GPU", value=_gs("ideal_gpu_vm", "Standard_NC24ads_A100_v4"), key="ideal_gpu_vm")
+                    st.number_input("Nodos base office", 0, 50, value=_gs("ideal_base_nodes", 3), key="ideal_base_nodes")
+                    st.number_input("Nodos pico", 0, 100, value=_gs("ideal_peak_nodes", 10), key="ideal_peak_nodes")
+                    st.number_input("Nodos off-hours", 0, 10, value=_gs("ideal_off_nodes", 1), key="ideal_off_nodes")
+                with ic_id3:
+                    st.number_input("Réplicas base", 0, 50, value=_gs("ideal_base_replicas", 3), key="ideal_base_replicas")
+                    st.number_input("Réplicas pico", 0, 100, value=_gs("ideal_peak_replicas", 10), key="ideal_peak_replicas")
+                    st.number_input("Réplicas off-hours", 0, 10, value=_gs("ideal_off_replicas", 1), key="ideal_off_replicas")
+
+            with st.expander("Configuración de nodos — Escenario Económico"):
+                st.caption("VM y dimensionado de nodos para el escenario AKS Económico (A10).")
+                ic_ec1, ic_ec2, ic_ec3 = st.columns(3)
+                with ic_ec1:
+                    st.text_input("VM sistema", value=_gs("eco_system_vm", "Standard_D8ds_v5"), key="eco_system_vm")
+                    st.number_input("Nodos sistema", 0, 10, value=_gs("eco_system_nodes", 1), key="eco_system_nodes")
+                with ic_ec2:
+                    st.text_input("VM GPU", value=_gs("eco_gpu_vm", "Standard_NV12ads_A10_v5"), key="eco_gpu_vm")
+                    st.number_input("Nodos base office", 0, 50, value=_gs("eco_base_nodes", 5), key="eco_base_nodes")
+                    st.number_input("Nodos pico", 0, 100, value=_gs("eco_peak_nodes", 20), key="eco_peak_nodes")
+                    st.number_input("Nodos off-hours", 0, 10, value=_gs("eco_off_nodes", 1), key="eco_off_nodes")
+                with ic_ec3:
+                    st.number_input("Réplicas base", 0, 50, value=_gs("eco_base_replicas", 5), key="eco_base_replicas")
+                    st.number_input("Réplicas pico", 0, 100, value=_gs("eco_peak_replicas", 20), key="eco_peak_replicas")
+                    st.number_input("Réplicas off-hours", 0, 10, value=_gs("eco_off_replicas", 1), key="eco_off_replicas")
 
         with tab_cdu:
             from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS, FREQUENCY_MULTIPLIERS
