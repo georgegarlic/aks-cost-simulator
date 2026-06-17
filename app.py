@@ -913,114 +913,113 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
             use_container_width=True, hide_index=True,
         )
 
-    col_xls, col_html = st.columns([1, 1])
-    with col_xls:
-        buf_xls = io.BytesIO()
-        ens_txt_det = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}.get(st.session_state.get("_uc_ens","medium"),"Medio")
-        caps_det = []
-        if st.session_state.get("_uc_cap_agentic"): caps_det.append("IA Agéntica (8.500€)")
-        if st.session_state.get("_uc_cap_anon"): caps_det.append("Anonimización (3.500€)")
-        if st.session_state.get("_uc_cap_sso"): caps_det.append("Autenticación SSO (4.000€)")
-        total_src_xls = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
-        sources_det = []
-        for k in CDU_SOURCE_KEYS:
-            c = st.session_state.get(f"_uc_src_{k}_cnt", 0)
-            if c > 0:
-                v = st.session_state.get(f"_uc_src_{k}_vol", 10.0)
-                f = st.session_state.get(f"_uc_src_{k}_freq", "daily")
-                sources_det.append({"Fuente": k, "Cantidad": c, "Vol. (GB)": v, "Frecuencia": f})
-        df_sources = pd.DataFrame(sources_det) if sources_det else pd.DataFrame()
-        with pd.ExcelWriter(buf_xls, engine="openpyxl") as writer:
-            # Sheet 1: Combined costs
-            if df_totales is not None and not df_totales.empty:
-                df_totales.to_excel(writer, sheet_name="Resumen", index=False)
-            # Sheet 2: Infra simulation
-            df_sim = df[["scenario","total_cost_eur","aks_gpu_cost_eur","api_llm_cost_eur",
-                         "aks_system_cost_eur","storage_cost_eur","lb_cost_eur",
-                         "monitor_cost_eur","acr_cost_eur","gpu_peak_nodes","mc_p50_eur","mc_p90_eur"]].copy()
-            df_sim.columns = ["Escenario","Total €","GPU €","API LLM €","Sistema €",
-                              "Almacenamiento €","LB €","Monitor €","ACR €","Nodos Pico","MC P50 €","MC P90 €"]
-            df_sim.to_excel(writer, sheet_name="Simulación", index=False)
-            # Sheet 3: Load profile
-            lp_data = pd.DataFrame([{
-                "Usuarios": lp.users,
-                "Interacciones/usuario/día": lp.interactions_per_user_day,
-                "Tokens entrada/interacción": lp.input_tokens_per_interaction,
-                "Tokens salida/interacción": lp.output_tokens_per_interaction,
-                "Días laborables/mes": lp.working_days_per_month,
-                "Horas oficina/día": lp.office_hours_per_day,
-                "Horas pico/día": lp.peak_hours_per_day,
-                "Ratio concurrencia": lp.concurrent_user_ratio,
-                "Multiplicador pico": lp.peak_multiplier,
-                "Concurrentes estimados": int(lp.users * lp.concurrent_user_ratio),
-                "Tokens/mes": lp.total_tokens_per_month,
-            }])
-            lp_data.to_excel(writer, sheet_name="Perfil Carga", index=False)
-            # Sheet 4: CdU
-            cdu_data = pd.DataFrame([{
-                "Total fuentes": total_src_xls,
-                "Capacidades": ", ".join(caps_det) if caps_det else "Ninguna",
-                "ENS": ens_txt_det,
-                "CAPEX implantación €": impl_cdu,
-                "OPEX recurrente/año €": rec_anual,
-            }])
-            cdu_data.to_excel(writer, sheet_name="CdU", index=False)
-            if not df_sources.empty:
-                df_sources.to_excel(writer, sheet_name="Fuentes CdU", index=False)
-            # Sheet 5: Prices (vertical con categoría InfraCloud / CdU)
-            from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS, FREQUENCY_MULTIPLIERS
-            rows_p = []
-            def ap(cat, param, val):
-                rows_p.append({"Categoría": cat, "Parámetro": param, "Valor": val})
-            ap("InfraCloud", "A100 GPU/h", f"{_gs('ideal_gpu_price', DEFAULT_IDEAL_GPU_PRICE):.2f} €")
-            ap("InfraCloud", "A10 GPU/h", f"{_gs('eco_gpu_price', DEFAULT_ECO_GPU_PRICE):.2f} €")
-            ap("InfraCloud", "Nodo sistema/h", f"{_gs('system_price', DEFAULT_SYSTEM_PRICE):.2f} €")
-            ap("InfraCloud", "Rendimiento A100 (tok/s)", str(_gs('ideal_throughput', DEFAULT_IDEAL_THROUGHPUT)))
-            ap("InfraCloud", "Rendimiento A10 (tok/s)", str(_gs('eco_throughput', DEFAULT_ECO_THROUGHPUT)))
-            ap("InfraCloud", "Utilización GPU", f"{_gs('gpu_utilization', DEFAULT_GPU_UTILIZATION):.0%}")
-            ap("InfraCloud", "Factor seguridad", f"{_gs('safety_factor', DEFAULT_SAFETY_FACTOR):.2f}")
-            ap("InfraCloud", "Storage Ideal/mes", f"{_gs('ideal_storage', DEFAULT_STORAGE_IDEAL):.0f} €")
-            ap("InfraCloud", "Storage Eco/mes", f"{_gs('eco_storage', DEFAULT_STORAGE_ECO):.0f} €")
-            ap("InfraCloud", "LB/mes", f"{_gs('ideal_lb', DEFAULT_LB):.0f} €")
-            ap("InfraCloud", "Monitor Ideal/mes", f"{_gs('ideal_monitor', DEFAULT_MONITOR_IDEAL):.0f} €")
-            ap("InfraCloud", "Monitor Eco/mes", f"{_gs('eco_monitor', DEFAULT_MONITOR_ECO):.0f} €")
-            ap("InfraCloud", "ACR Ideal/mes", f"{_gs('ideal_acr', DEFAULT_ACR_IDEAL):.0f} €")
-            ap("InfraCloud", "ACR Eco/mes", f"{_gs('eco_acr', DEFAULT_ACR_ECO):.0f} €")
-            ap("InfraCloud", "Modelo API", _gs('api_model', DEFAULT_API_MODEL))
-            ap("InfraCloud", "Input $/1M tok", f"{_gs('api_input_price', DEFAULT_API_INPUT_PRICE):.2f}")
-            ap("InfraCloud", "Output $/1M tok", f"{_gs('api_output_price', DEFAULT_API_OUTPUT_PRICE):.2f}")
-            ap("InfraCloud", "EUR/USD", f"{_gs('eur_usd_rate', DEFAULT_EUR_USD):.2f}")
-            ap("InfraCloud", "HA factor", f"{_gs('ha_factor', 1.15):.2f}")
-            ap("InfraCloud", "Overhead pico", f"{_gs('overhead_factor', 0.1):.0%}")
-            ap("InfraCloud", "MC iteraciones", str(_gs("mc_iterations", 5000)))
-            for sk in ["sharepoint","database","web_scraping","api","pdf_dynamic"]:
-                sl = {"sharepoint":"SharePoint/Alfresco","database":"BD Oracle/SQL",
-                      "web_scraping":"Web Scraping","api":"API REST","pdf_dynamic":"PDF Dinámico"}[sk]
-                for cmp, cl in [("low","baja"),("medium","media"),("high","alta")]:
-                    v = _gs(f"_cdu_src_{sk}_{cmp}", SOURCE_INTEGRATION_TABLE[sk][cmp])
-                    ap("CdU", f"Integración {sl} ({cl})", f"{v:,.0f} €")
-            maint_pct = _gs("_cdu_maintenance_pct", 10.0)
-            ap("CdU", "Mantenimiento anual (%)", f"{maint_pct:.1f} %")
-            for fk, fv in FREQUENCY_MULTIPLIERS.items():
-                fl = {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}
-                v = _gs(f"_cdu_freq_{fk}", fv)
-                ap("CdU", f"Multiplicador frecuencia {fl.get(fk,fk)}", f"{v:.2f}")
-            for ck, cl in [("agentic_ai","IA Agéntica"),("anonymization","Anonimización"),("sso","SSO")]:
-                capex = _gs(f"_cdu_cap_{ck}_capex", CAPABILITY_COSTS[ck]["capex"])
-                opex = _gs(f"_cdu_cap_{ck}_opex", CAPABILITY_COSTS[ck]["opex_monthly"])
-                ap("CdU", f"Capacidad {cl} CAPEX", f"{capex:,.0f} €")
-                ap("CdU", f"Capacidad {cl} OPEX/mes", f"{opex:,.0f} €")
-            for ek, el in [("none","Ninguno"),("basic","Básico"),("medium","Medio"),("high","Alto")]:
-                v = _gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"])
-                ap("CdU", f"ENS {el} CAPEX", f"{v:,.0f} €")
-            precios = pd.DataFrame(rows_p)
-            precios.to_excel(writer, sheet_name="Precios", index=False)
-        buf_xls.seek(0)
-        st.download_button("Exportar Excel", data=buf_xls, file_name="costes_completos.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    with col_html:
-        html_data = generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted)
-        st.download_button("Exportar HTML", html_data, "simulation_report.html", mime="text/html")
+    with st.container(border=True):
+        st.markdown("**Exportar resultados**")
+        col_xls, col_html = st.columns([1, 1])
+        with col_xls:
+            buf_xls = io.BytesIO()
+            ens_txt_det = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}.get(st.session_state.get("_uc_ens","medium"),"Medio")
+            caps_det = []
+            if st.session_state.get("_uc_cap_agentic"): caps_det.append("IA Agéntica (8.500€)")
+            if st.session_state.get("_uc_cap_anon"): caps_det.append("Anonimización (3.500€)")
+            if st.session_state.get("_uc_cap_sso"): caps_det.append("Autenticación SSO (4.000€)")
+            total_src_xls = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
+            sources_det = []
+            for k in CDU_SOURCE_KEYS:
+                c = st.session_state.get(f"_uc_src_{k}_cnt", 0)
+                if c > 0:
+                    v = st.session_state.get(f"_uc_src_{k}_vol", 10.0)
+                    f = st.session_state.get(f"_uc_src_{k}_freq", "daily")
+                    sources_det.append({"Fuente": k, "Cantidad": c, "Vol. (GB)": v, "Frecuencia": f})
+            df_sources = pd.DataFrame(sources_det) if sources_det else pd.DataFrame()
+            with pd.ExcelWriter(buf_xls, engine="openpyxl") as writer:
+                if df_totales is not None and not df_totales.empty:
+                    df_totales.to_excel(writer, sheet_name="Resumen", index=False)
+                df_sim = df[["scenario","total_cost_eur","aks_gpu_cost_eur","api_llm_cost_eur",
+                             "aks_system_cost_eur","storage_cost_eur","lb_cost_eur",
+                             "monitor_cost_eur","acr_cost_eur","gpu_peak_nodes","mc_p50_eur","mc_p90_eur"]].copy()
+                df_sim.columns = ["Escenario","Total €","GPU €","API LLM €","Sistema €",
+                                  "Almacenamiento €","LB €","Monitor €","ACR €","Nodos Pico","MC P50 €","MC P90 €"]
+                df_sim.to_excel(writer, sheet_name="Simulación", index=False)
+                lp_data = pd.DataFrame([{
+                    "Usuarios": lp.users,
+                    "Interacciones/usuario/día": lp.interactions_per_user_day,
+                    "Tokens entrada/interacción": lp.input_tokens_per_interaction,
+                    "Tokens salida/interacción": lp.output_tokens_per_interaction,
+                    "Días laborables/mes": lp.working_days_per_month,
+                    "Horas oficina/día": lp.office_hours_per_day,
+                    "Horas pico/día": lp.peak_hours_per_day,
+                    "Ratio concurrencia": lp.concurrent_user_ratio,
+                    "Multiplicador pico": lp.peak_multiplier,
+                    "Concurrentes estimados": int(lp.users * lp.concurrent_user_ratio),
+                    "Tokens/mes": lp.total_tokens_per_month,
+                }])
+                lp_data.to_excel(writer, sheet_name="Perfil Carga", index=False)
+                cdu_data = pd.DataFrame([{
+                    "Total fuentes": total_src_xls,
+                    "Capacidades": ", ".join(caps_det) if caps_det else "Ninguna",
+                    "ENS": ens_txt_det,
+                    "CAPEX implantación €": impl_cdu,
+                    "OPEX recurrente/año €": rec_anual,
+                }])
+                cdu_data.to_excel(writer, sheet_name="CdU", index=False)
+                if not df_sources.empty:
+                    df_sources.to_excel(writer, sheet_name="Fuentes CdU", index=False)
+                from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS, FREQUENCY_MULTIPLIERS
+                rows_p = []
+                def ap(cat, param, val):
+                    rows_p.append({"Categoría": cat, "Parámetro": param, "Valor": val})
+                ap("InfraCloud", "A100 GPU/h", f"{_gs('ideal_gpu_price', DEFAULT_IDEAL_GPU_PRICE):.2f} €")
+                ap("InfraCloud", "A10 GPU/h", f"{_gs('eco_gpu_price', DEFAULT_ECO_GPU_PRICE):.2f} €")
+                ap("InfraCloud", "Nodo sistema/h", f"{_gs('system_price', DEFAULT_SYSTEM_PRICE):.2f} €")
+                ap("InfraCloud", "Rendimiento A100 (tok/s)", str(_gs('ideal_throughput', DEFAULT_IDEAL_THROUGHPUT)))
+                ap("InfraCloud", "Rendimiento A10 (tok/s)", str(_gs('eco_throughput', DEFAULT_ECO_THROUGHPUT)))
+                ap("InfraCloud", "Utilización GPU", f"{_gs('gpu_utilization', DEFAULT_GPU_UTILIZATION):.0%}")
+                ap("InfraCloud", "Factor seguridad", f"{_gs('safety_factor', DEFAULT_SAFETY_FACTOR):.2f}")
+                ap("InfraCloud", "Storage Ideal/mes", f"{_gs('ideal_storage', DEFAULT_STORAGE_IDEAL):.0f} €")
+                ap("InfraCloud", "Storage Eco/mes", f"{_gs('eco_storage', DEFAULT_STORAGE_ECO):.0f} €")
+                ap("InfraCloud", "LB/mes", f"{_gs('ideal_lb', DEFAULT_LB):.0f} €")
+                ap("InfraCloud", "Monitor Ideal/mes", f"{_gs('ideal_monitor', DEFAULT_MONITOR_IDEAL):.0f} €")
+                ap("InfraCloud", "Monitor Eco/mes", f"{_gs('eco_monitor', DEFAULT_MONITOR_ECO):.0f} €")
+                ap("InfraCloud", "ACR Ideal/mes", f"{_gs('ideal_acr', DEFAULT_ACR_IDEAL):.0f} €")
+                ap("InfraCloud", "ACR Eco/mes", f"{_gs('eco_acr', DEFAULT_ACR_ECO):.0f} €")
+                ap("InfraCloud", "Modelo API", _gs('api_model', DEFAULT_API_MODEL))
+                ap("InfraCloud", "Input $/1M tok", f"{_gs('api_input_price', DEFAULT_API_INPUT_PRICE):.2f}")
+                ap("InfraCloud", "Output $/1M tok", f"{_gs('api_output_price', DEFAULT_API_OUTPUT_PRICE):.2f}")
+                ap("InfraCloud", "EUR/USD", f"{_gs('eur_usd_rate', DEFAULT_EUR_USD):.2f}")
+                ap("InfraCloud", "HA factor", f"{_gs('ha_factor', 1.15):.2f}")
+                ap("InfraCloud", "Overhead pico", f"{_gs('overhead_factor', 0.1):.0%}")
+                ap("InfraCloud", "MC iteraciones", str(_gs("mc_iterations", 5000)))
+                for sk in ["sharepoint","database","web_scraping","api","pdf_dynamic"]:
+                    sl = {"sharepoint":"SharePoint/Alfresco","database":"BD Oracle/SQL",
+                          "web_scraping":"Web Scraping","api":"API REST","pdf_dynamic":"PDF Dinámico"}[sk]
+                    for cmp, cl in [("low","baja"),("medium","media"),("high","alta")]:
+                        v = _gs(f"_cdu_src_{sk}_{cmp}", SOURCE_INTEGRATION_TABLE[sk][cmp])
+                        ap("CdU", f"Integración {sl} ({cl})", f"{v:,.0f} €")
+                maint_pct = _gs("_cdu_maintenance_pct", 10.0)
+                ap("CdU", "Mantenimiento anual (%)", f"{maint_pct:.1f} %")
+                for fk, fv in FREQUENCY_MULTIPLIERS.items():
+                    fl = {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}
+                    v = _gs(f"_cdu_freq_{fk}", fv)
+                    ap("CdU", f"Multiplicador frecuencia {fl.get(fk,fk)}", f"{v:.2f}")
+                for ck, cl in [("agentic_ai","IA Agéntica"),("anonymization","Anonimización"),("sso","SSO")]:
+                    capex = _gs(f"_cdu_cap_{ck}_capex", CAPABILITY_COSTS[ck]["capex"])
+                    opex = _gs(f"_cdu_cap_{ck}_opex", CAPABILITY_COSTS[ck]["opex_monthly"])
+                    ap("CdU", f"Capacidad {cl} CAPEX", f"{capex:,.0f} €")
+                    ap("CdU", f"Capacidad {cl} OPEX/mes", f"{opex:,.0f} €")
+                for ek, el in [("none","Ninguno"),("basic","Básico"),("medium","Medio"),("high","Alto")]:
+                    v = _gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"])
+                    ap("CdU", f"ENS {el} CAPEX", f"{v:,.0f} €")
+                precios = pd.DataFrame(rows_p)
+                precios.to_excel(writer, sheet_name="Precios", index=False)
+            buf_xls.seek(0)
+            st.download_button("Exportar Excel", data=buf_xls, file_name="costes_completos.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+        with col_html:
+            html_data = generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted)
+            st.download_button("Exportar HTML", html_data, "simulation_report.html", mime="text/html",
+                               use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1117,8 +1116,11 @@ def main():
             selection_mode="single", label_visibility="collapsed",
         )
 
-    st.markdown("**Simulador de Costes de Asistentes Virtuales**")
-    st.caption("Comparativa AKS (Ideal/Económico) vs Azure OpenAI API + costes de implantación por caso de uso")
+    st.markdown(
+        '<span title="Comparativa AKS (Ideal/Económico) vs Azure OpenAI API + costes de implantación por caso de uso">'
+        '**Simulador de Costes de Asistentes Virtuales**</span>',
+        unsafe_allow_html=True,
+    )
 
     # Azure defaults
     if "_azure_defaults" not in st.session_state:
@@ -1150,10 +1152,12 @@ def main():
 
     if _gs("_azure_defaults", None):
         azure_keys = _gs("_azure_defaults", {})
-        st.caption(
-            f"GPU prices loaded from Azure: A100 = {azure_keys.get('ideal_gpu_price', 6.0):.2f} EUR/h, "
+        st.markdown(
+            f"<span style='font-size:0.7rem;color:#888' title='GPU prices loaded from Azure: "
+            f"A100 = {azure_keys.get('ideal_gpu_price', 6.0):.2f} EUR/h, "
             f"A10 = {azure_keys.get('eco_gpu_price', 2.2):.2f} EUR/h, "
-            f"System = {azure_keys.get('system_price', 0.8):.2f} EUR/h"
+            f"System = {azure_keys.get('system_price', 0.8):.2f} EUR/h'></span>",
+            unsafe_allow_html=True,
         )
 
     # Apply default preset on first run
@@ -1161,35 +1165,35 @@ def main():
         apply_preset("750")
         st.session_state._preset_applied = True
 
-    # Top row: Preset selector + CdU summary card
-    col_pre, col_cdu = st.columns([1.5, 1])
-    with col_pre:
-        st.segmented_control(
-            _("Quick preset"), options=list(PRESET_KEYS),
-            format_func=lambda k: {"100":"100","200":"200","500":"500","750":"750",
-                                   "1k":"1k","2k":"2k","3k":"3k","6k":"6k",
-                                   "10k":"10k","20k":"20k","35k":"35k"}.get(k, k),
-            key="_preset_sel", default="750",
-            selection_mode="single", help=_("Auto-fill business parameters."),
-            on_change=lambda: apply_preset(st.session_state._preset_sel),
-        )
-        p = PRESETS.get(_gs("_preset_sel", "750"))
-        if p:
-            st.caption(f"{p['users']:,.0f} usuarios")
-
-    with col_cdu:
-        total_src = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
-        caps_list = []
-        if st.session_state.get("_uc_cap_agentic"): caps_list.append("IA Agéntica")
-        if st.session_state.get("_uc_cap_anon"): caps_list.append("Anonimización")
-        if st.session_state.get("_uc_cap_sso"): caps_list.append("SSO")
-        ens_txt = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}.get(st.session_state.get("_uc_ens","medium"),"Medio")
-        st.markdown(
-            f'<div class="cdu-card">'
-            f'<strong>CdU</strong>: {total_src} {_("sources")} &middot; {", ".join(caps_list) if caps_list else _("sin caps.")} &middot; ENS {ens_txt}'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+    # Top row: Preset selector + CdU summary card (same frame)
+    with st.container(border=True):
+        col_pre, col_cdu = st.columns([1.5, 1])
+        with col_pre:
+            st.segmented_control(
+                _("Quick preset"), options=list(PRESET_KEYS),
+                format_func=lambda k: {"100":"100","200":"200","500":"500","750":"750",
+                                       "1k":"1k","2k":"2k","3k":"3k","6k":"6k",
+                                       "10k":"10k","20k":"20k","35k":"35k"}.get(k, k),
+                key="_preset_sel", default="750",
+                selection_mode="single", help=_("Auto-fill business parameters."),
+                on_change=lambda: apply_preset(st.session_state._preset_sel),
+            )
+            p = PRESETS.get(_gs("_preset_sel", "750"))
+            if p:
+                st.caption(f"{p['users']:,.0f} usuarios")
+        with col_cdu:
+            total_src = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
+            caps_list = []
+            if st.session_state.get("_uc_cap_agentic"): caps_list.append("IA Agéntica")
+            if st.session_state.get("_uc_cap_anon"): caps_list.append("Anonimización")
+            if st.session_state.get("_uc_cap_sso"): caps_list.append("SSO")
+            ens_txt = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}.get(st.session_state.get("_uc_ens","medium"),"Medio")
+            st.markdown(
+                f'<div style="padding:0.2rem 0;text-align:right;font-size:0.85rem;">'
+                f'<strong>CdU</strong>: {total_src} {_("sources")} &middot; {", ".join(caps_list) if caps_list else _("sin caps.")} &middot; ENS {ens_txt}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     render_sidebar()
     data = build_data_from_ui()
@@ -1384,8 +1388,7 @@ def main():
                     st.number_input(freq_labels.get(fk, fk), 0.5, 2.0,
                         value=_gs(f"_cdu_freq_{fk}", fv), step=0.01, format="%.2f", key=f"_cdu_freq_{fk}")
 
-    with st.container(border=True):
-        st.markdown("**Azure Pricing**")
+    with st.expander("**Azure Pricing**", expanded=False):
         tab_azure_pricing(data)
 
 
