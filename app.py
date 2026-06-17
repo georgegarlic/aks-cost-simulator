@@ -1013,13 +1013,13 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
                 precios = pd.DataFrame(rows_p)
                 precios.to_excel(writer, sheet_name="Precios", index=False)
             buf_xls.seek(0)
-            st.download_button("Exportar Excel", data=buf_xls, file_name="costes_completos.xlsx",
+            st.download_button("📥 Exportar Excel", data=buf_xls, file_name="costes_completos.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
+                               use_container_width=True, type="primary")
         with col_html:
             html_data = generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted)
-            st.download_button("Exportar HTML", html_data, "simulation_report.html", mime="text/html",
-                               use_container_width=True)
+            st.download_button("📄 Exportar HTML", html_data, "simulation_report.html", mime="text/html",
+                               use_container_width=True, type="primary")
 
 
 # ---------------------------------------------------------------------------
