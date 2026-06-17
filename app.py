@@ -839,7 +839,7 @@ tr:nth-child(odd) {{ background: #fff; }}
     for cmp in ["low","medium","high"]
 ) + \
 "".join(
-    f"<tr><td>Multiplicador frecuencia {fl}</td><td>{_gs(f'_cdu_freq_{fk}', fv):.2f}</td></tr>"
+    f"<tr><td>Multiplicador frecuencia {fv}</td><td>{_gs(f'_cdu_freq_{fk}', 1.0):.2f}</td></tr>"
     for fk, fv in {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}.items()
 ) + \
 "".join(
