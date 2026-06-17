@@ -1,5 +1,6 @@
 """
 Streamlit web app for Azure infrastructure cost simulation.
+Refactored: centralized state, fixed presets, robust CdU sync, improved visuals.
 """
 
 import matplotlib
@@ -7,12 +8,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
-import io, base64, datetime
+import io
+import base64
+import datetime
 
 matplotlib.use("Agg")
 
 from model import LoadProfile, NodepoolConfig, AKSInfrastructure, APIConfig
 from simulator import simulate_all
+from usecase import InfoSource, calculate_usecase_cost
 from config import (
     DEFAULT_USERS, DEFAULT_INTERACTIONS_PER_USER_DAY,
     DEFAULT_INPUT_TOKENS, DEFAULT_OUTPUT_TOKENS,
@@ -30,8 +34,7 @@ from config import (
 )
 
 LANG = {
-    "en": {
-    },
+    "en": {},
     "es": {
         "Quick preset": "Perfil rápido",
         "Auto-fill business parameters.": "Rellena automáticamente los parámetros de negocio.",
@@ -131,31 +134,21 @@ LANG = {
         "GPU Cost (EUR)": "Coste GPU (EUR)",
         "API LLM (EUR)": "API LLM (EUR)",
         "Annual (EUR)": "Anual (EUR)",
-        "API ~0.3k": "API ~0.3k",
-        "API ~0.8k": "API ~0.8k",
-        "API ~1.5k, Eco ~2.2k": "API ~1.5k, Eco ~2.2k",
-        "API ~2.0k, Eco ~2.4k": "API ~2.0k, Eco ~2.4k",
-        "API ~2.4k, Eco ~2.5k": "API ~2.4k, Eco ~2.5k",
-        "API ~3.0k, Eco ~2.8k": "API ~3.0k, Eco ~2.8k",
-        "Eco ~3.8k, API ~4.5k": "Eco ~3.8k, API ~4.5k",
-        "Eco ~5.2k, API ~8.0k": "Eco ~5.2k, API ~8.0k",
-        "Eco ~6.5k, API ~12k": "Eco ~6.5k, API ~12k",
-        "Eco ~8k, Ideal ~9k, API ~15k": "Eco ~8k, Ideal ~9k, API ~15k",
-        "Eco ~9.5k, Ideal ~10.5k, API ~20k": "Eco ~9.5k, Ideal ~10.5k, API ~20k",
-        "Eco ~11k, Ideal ~12k, API ~25k": "Eco ~11k, Ideal ~12k, API ~25k",
-        "Eco ~13k, Ideal ~14k, API ~35k": "Eco ~13k, Ideal ~14k, API ~35k",
-        "Eco ~16k, Ideal ~17k, API ~45k": "Eco ~16k, Ideal ~17k, API ~45k",
-        "Eco ~35k, Ideal ~36k, API ~80k": "Eco ~35k, Ideal ~36k, API ~80k",
-        "Eco ~50k, Ideal ~52k, API ~130k": "Eco ~50k, Ideal ~52k, API ~130k",
-        "Eco ~68k, Ideal ~70k, API ~180k": "Eco ~68k, Ideal ~70k, API ~180k",
-        "Ideal ~140k, Eco ~145k, API ~260k": "Ideal ~140k, Eco ~145k, API ~260k",
-        "Ideal ~320k, Eco ~340k, API ~550k": "Ideal ~320k, Eco ~340k, API ~550k",
-        "Ideal ~540k, Eco ~580k, API ~900k": "Ideal ~540k, Eco ~580k, API ~900k",
-        "Ideal ~750k, Eco ~810k, API ~1.38M": "Ideal ~750k, Eco ~810k, API ~1.38M",
+        "Use Case Simulation": "Coste por Caso de Uso",
+        "CAPEX (one-time)": "CAPEX (único)",
+        "Source integration": "Integración de fuentes",
+        "OPEX (monthly)": "OPEX (mensual)",
+        "Source maintenance": "Mantenimiento de fuentes",
+        "Capabilities maintenance": "Mantenimiento capacidades",
+        "Year 1": "Año 1",
+        "Year 3": "Año 3",
+        "CAPEX Breakdown": "Desglose CAPEX",
+        "Monthly OPEX Breakdown": "Desglose OPEX mensual",
+        "CdU": "CdU",
+        "sources": "fuentes",
+        "sin caps.": "sin caps.",
     },
     "gl": {
-        "Azure AKS + LLM Cost Simulator": "Simulador de Custos Azure AKS + LLM",
-        "Compare AKS (Ideal/Economy) vs Azure OpenAI API for virtual assistants": "Compara AKS (Ideal/Economy) vs Azure OpenAI API para asistentes virtuais",
         "Quick preset": "Perfil rápido",
         "Auto-fill business parameters.": "Enche automaticamente os parámetros de negocio.",
         "Load Profile": "Perfil de carga",
@@ -191,14 +184,11 @@ LANG = {
         "Overhead": "Overhead",
         "Exchange": "Cambio",
         "EUR/USD": "EUR/USD",
-        "Machine details & settings": "Detalles de máquina",
-        "Sizing": "Dimensionado",
         "System node/hr": "Nodo sistema/h",
         "A100 throughput (tok/s)": "Rendemento A100 (tok/s)",
         "A10 throughput (tok/s)": "Rendemento A10 (tok/s)",
         "GPU utilization": "Utilización GPU",
         "Safety factor": "Factor de seguridade",
-        "Infrastructure (EUR/mo)": "Infraestrutura (EUR/mes)",
         "Ideal storage": "Almacenamento Ideal",
         "Ideal LB": "LB Ideal",
         "Ideal monitor": "Monitor Ideal",
@@ -213,22 +203,18 @@ LANG = {
         "Tokens/mo": "Tokens/mes",
         "Office/Peak hrs": "Horas oficina/pico",
         "Days/mo": "Días/mes",
-        "GPU nodes dominate AKS cost. System, Storage, LB, Monitor, and ACR are fixed overheads independent of traffic.": "Os nodos GPU dominan o custo AKS. Sistema, Almacenamento, LB, Monitor e ACR son custos fixos independentes do tráfico.",
-        "API costs {0}x more than the cheapest AKS option. API has no infrastructure cost but pays per token.": "API custa {0}x máis que a opción AKS máis barata. API non ten custo de infraestrutura pero paga por token.",
+        "GPU nodes dominate AKS cost.": "Os nodos GPU dominan o custo AKS.",
         "Detailed comparison": "Comparativa detallada",
-        "AKS nodes auto-sized. Total = GPU VM + System VM + Storage + LB + Monitor + ACR + API.": "Nodos AKS auto-dimensionados. Total = GPU VM + System VM + Storage + LB + Monitor + ACR + API.",
         "CSV": "CSV",
         "PDF Report": "Informe PDF",
         "Simulation": "Simulación",
         "Azure Pricing": "Prezos Azure",
         "Azure Retail Prices (real-time from API)": "Prezos minoristas Azure (tempo real desde API)",
-        "Prices fetched from https://prices.azure.com/api/retail/prices. Region: West Europe. USD converted to EUR at configured rate.": "Prezos obtidos de https://prices.azure.com/api/retail/prices. Rexión: West Europe. USD convertido a EUR ao tipo configurado.",
         "Fetched {0} prices from Azure Retail Prices API": "Obtidos {0} prezos da API de prezos Azure",
         "Azure API unavailable: {0}": "API Azure non dispoñible: {0}",
         "Azure SKUs being considered": "SKUs Azure consideradas",
         "AKS Infrastructure costs (monthly)": "Custos infraestrutura AKS (mensuais)",
         "Azure OpenAI API config": "Configuración API Azure OpenAI",
-        "Azure API query details": "Detalles de consulta API Azure",
         "Resource": "Recurso",
         "Price USD": "Prezo USD",
         "Price EUR": "Prezo EUR",
@@ -248,45 +234,36 @@ LANG = {
         "EUR/USD rate": "Tipo EUR/USD",
         "exported on": "exportado o",
         "Language": "Idioma",
-        "Select interface language.": "Selecciona o idioma da interface.",
         "Peak Nodes": "Nodos Pico",
         "Total (EUR)": "Total (EUR)",
         "GPU Cost (EUR)": "Custo GPU (EUR)",
         "API LLM (EUR)": "API LLM (EUR)",
         "Annual (EUR)": "Anual (EUR)",
-        "API ~0.3k": "API ~0.3k",
-        "API ~0.8k": "API ~0.8k",
-        "API ~1.5k, Eco ~2.2k": "API ~1.5k, Eco ~2.2k",
-        "API ~2.0k, Eco ~2.4k": "API ~2.0k, Eco ~2.4k",
-        "API ~2.4k, Eco ~2.5k": "API ~2.4k, Eco ~2.5k",
-        "API ~3.0k, Eco ~2.8k": "API ~3.0k, Eco ~2.8k",
-        "Eco ~3.8k, API ~4.5k": "Eco ~3.8k, API ~4.5k",
-        "Eco ~5.2k, API ~8.0k": "Eco ~5.2k, API ~8.0k",
-        "Eco ~6.5k, API ~12k": "Eco ~6.5k, API ~12k",
-        "Eco ~8k, Ideal ~9k, API ~15k": "Eco ~8k, Ideal ~9k, API ~15k",
-        "Eco ~9.5k, Ideal ~10.5k, API ~20k": "Eco ~9.5k, Ideal ~10.5k, API ~20k",
-        "Eco ~11k, Ideal ~12k, API ~25k": "Eco ~11k, Ideal ~12k, API ~25k",
-        "Eco ~13k, Ideal ~14k, API ~35k": "Eco ~13k, Ideal ~14k, API ~35k",
-        "Eco ~16k, Ideal ~17k, API ~45k": "Eco ~16k, Ideal ~17k, API ~45k",
-        "Eco ~35k, Ideal ~36k, API ~80k": "Eco ~35k, Ideal ~36k, API ~80k",
-        "Eco ~50k, Ideal ~52k, API ~130k": "Eco ~50k, Ideal ~52k, API ~130k",
-        "Eco ~68k, Ideal ~70k, API ~180k": "Eco ~68k, Ideal ~70k, API ~180k",
-        "Ideal ~140k, Eco ~145k, API ~260k": "Ideal ~140k, Eco ~145k, API ~260k",
-        "Ideal ~320k, Eco ~340k, API ~550k": "Ideal ~320k, Eco ~340k, API ~550k",
-        "Ideal ~540k, Eco ~580k, API ~900k": "Ideal ~540k, Eco ~580k, API ~900k",
-        "Ideal ~750k, Eco ~810k, API ~1.38M": "Ideal ~750k, Eco ~810k, API ~1.38M",
+        "Use Case Simulation": "Custo por Caso de Uso",
+        "CAPEX (one-time)": "CAPEX (único)",
+        "Source integration": "Integración de fontes",
+        "OPEX (monthly)": "OPEX (mensual)",
+        "Source maintenance": "Mantenemento de fontes",
+        "Capabilities maintenance": "Mantenemento capacidades",
+        "Year 1": "Ano 1",
+        "Year 3": "Ano 3",
+        "CAPEX Breakdown": "Desglose CAPEX",
+        "Monthly OPEX Breakdown": "Desglose OPEX mensual",
+        "CdU": "CdU",
+        "sources": "fontes",
+        "sin caps.": "sen caps.",
     },
 }
 
 
 def _(text):
-    raw = st.session_state.get("lang", "en") if hasattr(st, "session_state") and st.session_state else "en"
+    raw = st.session_state.get("lang", "en")
     lang = raw.lower()
     return LANG.get(lang, {}).get(text, text)
 
 
 st.set_page_config(
-    page_title="Azure AKS + LLM Cost Simulator",
+    page_title="Simulador de Costes de Asistentes Virtuales",
     page_icon="\u2601",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -310,95 +287,160 @@ COMPACT_CSS = """
     section[data-testid="stSidebar"] label { font-size: 0.7rem !important; }
     div[data-testid="stExpander"] { font-size: 0.8rem; }
     div.stTabs button { font-size: 0.8rem; padding: 0.3rem 0.8rem; }
+    .cdu-card { background: #ffffff; border: 1px solid #cbd5e1; border-left: 5px solid #2563eb; border-radius: 8px; padding: 0.7rem 1.2rem; margin-bottom: 0.5rem; font-size: 0.9rem; color: #0f172a; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .cdu-card strong { color: #1d4ed8; font-weight: 700; }
+    .cdu-card p { margin: 0.2rem 0; line-height: 1.5; }
+    .winner-card { background: #d4edda; border: 2px solid #166534; border-radius: 10px; padding: 0.8rem 1.2rem; text-align: center; color: #14532d; }
+    .winner-card h3 { margin: 0; color: #166534; font-size: 1rem; }
+    .winner-card .winner-amount { margin: 0; color: #14532d; font-weight: 700; font-size: 1.5rem; }
+    .runner-card { background: #e8f0fe; border: 1px solid #1e40af; border-radius: 8px; padding: 0.5rem 1rem; color: #1e3a5f; }
+    .runner-card p { margin: 0; color: #1e3a5f; }
+    div[data-testid="stMetric"] { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.4rem 0.6rem; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    div[data-testid="stMetric"] label { color: #334155 !important; font-weight: 600 !important; font-size: 0.7rem !important; text-transform: uppercase; letter-spacing: 0.02em; }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #0f172a !important; font-weight: 700 !important; }
+    .stAlert { font-size: 0.85rem; }
+    div[data-testid="stDataFrame"] { border: 1px solid #94a3b8; border-radius: 6px; overflow: hidden; font-size: 0.8rem; }
+    div[data-testid="stDataFrame"] th { background: #1e3a5f; color: #ffffff; font-weight: 700; padding: 0.4rem 0.6rem; text-align: left; border-bottom: 2px solid #0f2440; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    div[data-testid="stDataFrame"] td { padding: 0.35rem 0.6rem; border-bottom: 1px solid #e2e8f0; color: #0f172a; font-size: 0.8rem; }
+    div[data-testid="stDataFrame"] tr:nth-child(even) td { background: #f1f5f9; }
+    div[data-testid="stDataFrame"] tr:hover td { background: #dbeafe; }
+    .stDataFrame [data-testid="StyledDataFrameDataCell"] { border-bottom: 1px solid #e2e8f0; }
+    table { border-collapse: collapse; width: 100%; }
+    th { background: #1e3a5f; color: white; font-weight: 700; padding: 0.4rem 0.6rem; text-align: left; }
+    td { padding: 0.35rem 0.6rem; border-bottom: 1px solid #e2e8f0; color: #0f172a; }
+    tr:nth-child(even) td { background: #f1f5f9; }
+    [data-testid="stContainer"] { border-color: #e2e8f0 !important; }
+    .cost-table td { color: #0f172a; }
+    .cost-table th { background: #1e3a5f; color: #fff; }
+    .cost-table .footer { background: #f8fafc; color: #64748b; }
+    .cost-table .sc-ideal { color: #1e40af; }
+    .cost-table .sc-eco { color: #15803d; }
+    .cost-table .sc-api { color: #b45309; }
+    .cost-table .year1 { color: #dc2626; }
+    @media (prefers-color-scheme: dark) {
+        .cdu-card { background: #1e293b; border-color: #334155; color: #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+        .cdu-card strong { color: #60a5fa; }
+        .winner-card { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
+        .winner-card h3 { color: #4ade80; }
+        .winner-card .winner-amount { color: #bbf7d0; }
+        .runner-card { background: #1e3a5f; border-color: #3b82f6; color: #bfdbfe; }
+        .runner-card p { color: #bfdbfe; }
+        div[data-testid="stMetric"] { background: #1e293b; border-color: #334155; }
+        div[data-testid="stMetric"] label { color: #94a3b8 !important; }
+        div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #e2e8f0 !important; }
+        div[data-testid="stDataFrame"] { border-color: #334155; }
+        div[data-testid="stDataFrame"] th { background: #0f2440; border-bottom-color: #1e3a5f; }
+        div[data-testid="stDataFrame"] td { color: #e2e8f0; border-bottom-color: #334155; }
+        div[data-testid="stDataFrame"] tr:nth-child(even) td { background: #1e293b; }
+        div[data-testid="stDataFrame"] tr:hover td { background: #334155; }
+        td { color: #e2e8f0; border-bottom-color: #334155; }
+        tr:nth-child(even) td { background: #1e293b; }
+        [data-testid="stContainer"] { border-color: #334155 !important; }
+        .cost-table td { color: #e2e8f0; }
+        .cost-table th { background: #0f2440; color: #e2e8f0; }
+        .cost-table .footer { background: #1e293b; color: #94a3b8; }
+        .cost-table .sc-ideal { color: #60a5fa; }
+        .cost-table .sc-eco { color: #4ade80; }
+        .cost-table .sc-api { color: #fbbf24; }
+        .cost-table .year1 { color: #f87171; }
+        .cost-table { border-color: #334155 !important; }
+    }
 </style>
 """
 st.markdown(COMPACT_CSS, unsafe_allow_html=True)
 
 
-def build_data_from_ui() -> dict:
-    lp = LoadProfile(
-        users=st.session_state.get("users", DEFAULT_USERS),
-        interactions_per_user_day=st.session_state.get("interactions_per_user_day", DEFAULT_INTERACTIONS_PER_USER_DAY),
-        input_tokens_per_interaction=st.session_state.get("input_tokens_per_interaction", DEFAULT_INPUT_TOKENS),
-        output_tokens_per_interaction=st.session_state.get("output_tokens_per_interaction", DEFAULT_OUTPUT_TOKENS),
-        working_days_per_month=st.session_state.get("working_days_per_month", DEFAULT_WORKING_DAYS),
-        office_hours_per_day=st.session_state.get("office_hours_per_day", DEFAULT_OFFICE_HOURS),
-        peak_hours_per_day=st.session_state.get("peak_hours_per_day", DEFAULT_PEAK_HOURS),
-        concurrent_user_ratio=st.session_state.get("concurrent_user_ratio", DEFAULT_CONCURRENT_RATIO),
-        peak_multiplier=st.session_state.get("peak_multiplier", DEFAULT_PEAK_MULTIPLIER),
-    )
+# ---------------------------------------------------------------------------
+# Session state initialization
+# ---------------------------------------------------------------------------
+STATE_DEFAULTS = {
+    "users": DEFAULT_USERS,
+    "interactions_per_user_day": DEFAULT_INTERACTIONS_PER_USER_DAY,
+    "input_tokens_per_interaction": DEFAULT_INPUT_TOKENS,
+    "output_tokens_per_interaction": DEFAULT_OUTPUT_TOKENS,
+    "working_days_per_month": DEFAULT_WORKING_DAYS,
+    "office_hours_per_day": DEFAULT_OFFICE_HOURS,
+    "peak_hours_per_day": DEFAULT_PEAK_HOURS,
+    "concurrent_user_ratio": DEFAULT_CONCURRENT_RATIO,
+    "peak_multiplier": DEFAULT_PEAK_MULTIPLIER,
+    "system_price": DEFAULT_SYSTEM_PRICE,
+    "ideal_gpu_price": DEFAULT_IDEAL_GPU_PRICE,
+    "ideal_throughput": DEFAULT_IDEAL_THROUGHPUT,
+    "eco_gpu_price": DEFAULT_ECO_GPU_PRICE,
+    "eco_throughput": DEFAULT_ECO_THROUGHPUT,
+    "gpu_utilization": DEFAULT_GPU_UTILIZATION,
+    "safety_factor": DEFAULT_SAFETY_FACTOR,
+    "ideal_storage": DEFAULT_STORAGE_IDEAL,
+    "ideal_lb": DEFAULT_LB,
+    "ideal_monitor": DEFAULT_MONITOR_IDEAL,
+    "ideal_acr": DEFAULT_ACR_IDEAL,
+    "eco_storage": DEFAULT_STORAGE_ECO,
+    "eco_lb": DEFAULT_LB,
+    "eco_monitor": DEFAULT_MONITOR_ECO,
+    "eco_acr": DEFAULT_ACR_ECO,
+    "api_model": DEFAULT_API_MODEL,
+    "api_input_price": DEFAULT_API_INPUT_PRICE,
+    "api_output_price": DEFAULT_API_OUTPUT_PRICE,
+    "eur_usd_rate": DEFAULT_EUR_USD,
+    "mc_iterations": 5000,
+    "ha_factor": 1.15,
+    "overhead_factor": 0.1,
+    "lang": "ES",
+    "_preset_sel": "750",
+    "_uc_ens": "medium",
+    "_uc_cap_agentic": False,
+    "_uc_cap_anon": False,
+    "_uc_cap_sso": False,
+    "_uc_src_sharepoint_cnt": 6,
+    "_uc_src_database_cnt": 4,
+    "_uc_src_web_scraping_cnt": 4,
+    "_uc_src_api_cnt": 4,
+    "_uc_src_pdf_dynamic_cnt": 2,
+    "_uc_src_sharepoint_vol": 10.0,
+    "_uc_src_database_vol": 10.0,
+    "_uc_src_web_scraping_vol": 10.0,
+    "_uc_src_api_vol": 10.0,
+    "_uc_src_pdf_dynamic_vol": 10.0,
+    "_uc_src_sharepoint_freq": "daily",
+    "_uc_src_database_freq": "daily",
+    "_uc_src_web_scraping_freq": "daily",
+    "_uc_src_api_freq": "daily",
+    "_uc_src_pdf_dynamic_freq": "daily",
+}
 
-    infra_ideal = AKSInfrastructure(name="LLM on AKS (Ideal UX)")
-    infra_ideal.system_nodepool = NodepoolConfig(
-        vm_type="Standard_D8ds_v5", base_office_nodes=1,
-        price_per_hour=st.session_state.get("system_price", DEFAULT_SYSTEM_PRICE),
-    )
-    infra_ideal.inference_nodepool = NodepoolConfig(
-        vm_type="Standard_NC24ads_A100_v4",
-        base_office_nodes=3, peak_nodes=10, off_hours_nodes=1,
-        price_per_hour=st.session_state.get("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE),
-    )
-    infra_ideal.throughput_tok_s_per_pod = st.session_state.get("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT)
-    infra_ideal.gpu_utilization = st.session_state.get("gpu_utilization", DEFAULT_GPU_UTILIZATION)
-    infra_ideal.safety_factor = st.session_state.get("safety_factor", DEFAULT_SAFETY_FACTOR)
-    infra_ideal.base_replicas = 3
-    infra_ideal.peak_replicas = 10
-    infra_ideal.off_hours_replicas = 1
-    infra_ideal.storage_cost_per_month = st.session_state.get("ideal_storage", DEFAULT_STORAGE_IDEAL)
-    infra_ideal.lb_cost_per_month = st.session_state.get("ideal_lb", DEFAULT_LB)
-    infra_ideal.monitor_cost_per_month = st.session_state.get("ideal_monitor", DEFAULT_MONITOR_IDEAL)
-    infra_ideal.acr_cost_per_month = st.session_state.get("ideal_acr", DEFAULT_ACR_IDEAL)
-
-    infra_economy = AKSInfrastructure(name="LLM on AKS (Economy UX)")
-    infra_economy.system_nodepool = NodepoolConfig(
-        vm_type="Standard_D8ds_v5", base_office_nodes=1,
-        price_per_hour=st.session_state.get("system_price", DEFAULT_SYSTEM_PRICE),
-    )
-    infra_economy.inference_nodepool = NodepoolConfig(
-        vm_type="Standard_NV12ads_A10_v5",
-        base_office_nodes=5, peak_nodes=20, off_hours_nodes=1,
-        price_per_hour=st.session_state.get("eco_gpu_price", DEFAULT_ECO_GPU_PRICE),
-    )
-    infra_economy.throughput_tok_s_per_pod = st.session_state.get("eco_throughput", DEFAULT_ECO_THROUGHPUT)
-    infra_economy.gpu_utilization = st.session_state.get("gpu_utilization", DEFAULT_GPU_UTILIZATION)
-    infra_economy.safety_factor = st.session_state.get("safety_factor", DEFAULT_SAFETY_FACTOR)
-    infra_economy.base_replicas = 5
-    infra_economy.peak_replicas = 20
-    infra_economy.off_hours_replicas = 1
-    infra_economy.storage_cost_per_month = st.session_state.get("eco_storage", DEFAULT_STORAGE_ECO)
-    infra_economy.lb_cost_per_month = st.session_state.get("eco_lb", DEFAULT_LB)
-    infra_economy.monitor_cost_per_month = st.session_state.get("eco_monitor", DEFAULT_MONITOR_ECO)
-    infra_economy.acr_cost_per_month = st.session_state.get("eco_acr", DEFAULT_ACR_ECO)
-
-    api = APIConfig(
-        name="API Azure OpenAI",
-        model=st.session_state.get("api_model", DEFAULT_API_MODEL),
-        input_price_per_1m_tokens_usd=st.session_state.get("api_input_price", DEFAULT_API_INPUT_PRICE),
-        output_price_per_1m_tokens_usd=st.session_state.get("api_output_price", DEFAULT_API_OUTPUT_PRICE),
-        eur_usd_rate=st.session_state.get("eur_usd_rate", DEFAULT_EUR_USD),
-    )
-
-    return {
-        "load_profile": lp,
-        "infra_ideal": infra_ideal,
-        "infra_economica": infra_economy,
-        "api_config": api,
-        "comparativa": pd.DataFrame(),
-    }
+CDU_SOURCE_KEYS = ["sharepoint", "database", "web_scraping", "api", "pdf_dynamic"]
 
 
+def _gs(key, default):
+    return st.session_state.get(key, default)
+
+
+# ---------------------------------------------------------------------------
+# Presets
+# ---------------------------------------------------------------------------
 PRESETS = {
-    "100": {"users": 100, "interactions_per_user_day": 8, "input_tokens_per_interaction": 400, "output_tokens_per_interaction": 150, "working_days_per_month": 22, "office_hours_per_day": 8, "peak_hours_per_day": 0.25, "concurrent_user_ratio": 0.30, "peak_multiplier": 1.5, "desc": "dept. pequeño"},
-    "200": {"users": 200, "interactions_per_user_day": 10, "input_tokens_per_interaction": 500, "output_tokens_per_interaction": 200, "working_days_per_month": 22, "office_hours_per_day": 8, "peak_hours_per_day": 0.25, "concurrent_user_ratio": 0.25, "peak_multiplier": 1.5, "desc": "dept. mediano"},
-    "500": {"users": 500, "interactions_per_user_day": 12, "input_tokens_per_interaction": 600, "output_tokens_per_interaction": 250, "working_days_per_month": 22, "office_hours_per_day": 9, "peak_hours_per_day": 0.5, "concurrent_user_ratio": 0.20, "peak_multiplier": 1.5, "desc": "división pequeña"},
-    "750": {"users": 750, "interactions_per_user_day": 15, "input_tokens_per_interaction": 700, "output_tokens_per_interaction": 300, "working_days_per_month": 22, "office_hours_per_day": 9, "peak_hours_per_day": 0.5, "concurrent_user_ratio": 0.18, "peak_multiplier": 1.5, "desc": "división mediana"},
-    "1k": {"users": 1000, "interactions_per_user_day": 20, "input_tokens_per_interaction": 1000, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 9, "peak_hours_per_day": 0.5, "concurrent_user_ratio": 0.18, "peak_multiplier": 1.5, "desc": "división grande"},
-    "2k": {"users": 2000, "interactions_per_user_day": 25, "input_tokens_per_interaction": 1200, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 10, "peak_hours_per_day": 1.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "organización pequeña"},
-    "3k": {"users": 3000, "interactions_per_user_day": 30, "input_tokens_per_interaction": 1500, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 10, "peak_hours_per_day": 1.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "organización mediana"},
-    "6k": {"users": 6000, "interactions_per_user_day": 30, "input_tokens_per_interaction": 2000, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 10, "peak_hours_per_day": 2.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "organización grande (por defecto)"},
-    "10k": {"users": 10000, "interactions_per_user_day": 35, "input_tokens_per_interaction": 2000, "output_tokens_per_interaction": 500, "working_days_per_month": 22, "office_hours_per_day": 11, "peak_hours_per_day": 2.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "empresa"},
-    "20k": {"users": 20000, "interactions_per_user_day": 40, "input_tokens_per_interaction": 2500, "output_tokens_per_interaction": 500, "working_days_per_month": 22, "office_hours_per_day": 12, "peak_hours_per_day": 2.0, "concurrent_user_ratio": 0.18, "peak_multiplier": 2.5, "desc": "corporación"},
-    "35k": {"users": 35000, "interactions_per_user_day": 45, "input_tokens_per_interaction": 2500, "output_tokens_per_interaction": 600, "working_days_per_month": 22, "office_hours_per_day": 12, "peak_hours_per_day": 3.0, "concurrent_user_ratio": 0.20, "peak_multiplier": 2.5, "desc": "gran corporación"},
+    "100": {"users": 100, "interactions_per_user_day": 8, "input_tokens_per_interaction": 400, "output_tokens_per_interaction": 150, "working_days_per_month": 22, "office_hours_per_day": 8, "peak_hours_per_day": 0.25, "concurrent_user_ratio": 0.30, "peak_multiplier": 1.5, "desc": "dept. pequeño",
+     "_uc_src_sharepoint_cnt":2,"_uc_src_database_cnt":1,"_uc_src_web_scraping_cnt":1,"_uc_src_api_cnt":1,"_uc_src_pdf_dynamic_cnt":1,"_uc_cap_agentic":False,"_uc_cap_anon":False,"_uc_cap_sso":True,"_uc_ens":"basic"},
+    "200": {"users": 200, "interactions_per_user_day": 10, "input_tokens_per_interaction": 500, "output_tokens_per_interaction": 200, "working_days_per_month": 22, "office_hours_per_day": 8, "peak_hours_per_day": 0.25, "concurrent_user_ratio": 0.25, "peak_multiplier": 1.5, "desc": "dept. mediano",
+     "_uc_src_sharepoint_cnt":3,"_uc_src_database_cnt":2,"_uc_src_web_scraping_cnt":2,"_uc_src_api_cnt":1,"_uc_src_pdf_dynamic_cnt":1,"_uc_cap_agentic":False,"_uc_cap_anon":False,"_uc_cap_sso":True,"_uc_ens":"basic"},
+    "500": {"users": 500, "interactions_per_user_day": 12, "input_tokens_per_interaction": 600, "output_tokens_per_interaction": 250, "working_days_per_month": 22, "office_hours_per_day": 9, "peak_hours_per_day": 0.5, "concurrent_user_ratio": 0.20, "peak_multiplier": 1.5, "desc": "división pequeña",
+     "_uc_src_sharepoint_cnt":5,"_uc_src_database_cnt":3,"_uc_src_web_scraping_cnt":3,"_uc_src_api_cnt":3,"_uc_src_pdf_dynamic_cnt":2,"_uc_cap_agentic":True,"_uc_cap_anon":False,"_uc_cap_sso":True,"_uc_ens":"basic"},
+    "750": {"users": 750, "interactions_per_user_day": 15, "input_tokens_per_interaction": 700, "output_tokens_per_interaction": 300, "working_days_per_month": 22, "office_hours_per_day": 9, "peak_hours_per_day": 0.5, "concurrent_user_ratio": 0.18, "peak_multiplier": 1.5, "desc": "división mediana (por defecto)",
+     "_uc_src_sharepoint_cnt":6,"_uc_src_database_cnt":4,"_uc_src_web_scraping_cnt":4,"_uc_src_api_cnt":4,"_uc_src_pdf_dynamic_cnt":2,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"medium"},
+    "1k": {"users": 1000, "interactions_per_user_day": 20, "input_tokens_per_interaction": 1000, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 9, "peak_hours_per_day": 0.5, "concurrent_user_ratio": 0.18, "peak_multiplier": 1.5, "desc": "división grande",
+     "_uc_src_sharepoint_cnt":8,"_uc_src_database_cnt":5,"_uc_src_web_scraping_cnt":5,"_uc_src_api_cnt":4,"_uc_src_pdf_dynamic_cnt":3,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"medium"},
+    "2k": {"users": 2000, "interactions_per_user_day": 25, "input_tokens_per_interaction": 1200, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 10, "peak_hours_per_day": 1.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "organización pequeña",
+     "_uc_src_sharepoint_cnt":10,"_uc_src_database_cnt":6,"_uc_src_web_scraping_cnt":6,"_uc_src_api_cnt":6,"_uc_src_pdf_dynamic_cnt":4,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"medium"},
+    "3k": {"users": 3000, "interactions_per_user_day": 30, "input_tokens_per_interaction": 1500, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 10, "peak_hours_per_day": 1.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "organización mediana",
+     "_uc_src_sharepoint_cnt":12,"_uc_src_database_cnt":8,"_uc_src_web_scraping_cnt":8,"_uc_src_api_cnt":8,"_uc_src_pdf_dynamic_cnt":4,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"medium"},
+    "6k": {"users": 6000, "interactions_per_user_day": 30, "input_tokens_per_interaction": 2000, "output_tokens_per_interaction": 400, "working_days_per_month": 22, "office_hours_per_day": 10, "peak_hours_per_day": 2.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "organización grande",
+     "_uc_src_sharepoint_cnt":15,"_uc_src_database_cnt":10,"_uc_src_web_scraping_cnt":10,"_uc_src_api_cnt":10,"_uc_src_pdf_dynamic_cnt":5,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"high"},
+    "10k": {"users": 10000, "interactions_per_user_day": 35, "input_tokens_per_interaction": 2000, "output_tokens_per_interaction": 500, "working_days_per_month": 22, "office_hours_per_day": 11, "peak_hours_per_day": 2.0, "concurrent_user_ratio": 0.15, "peak_multiplier": 2.0, "desc": "empresa",
+     "_uc_src_sharepoint_cnt":18,"_uc_src_database_cnt":12,"_uc_src_web_scraping_cnt":12,"_uc_src_api_cnt":12,"_uc_src_pdf_dynamic_cnt":6,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"high"},
+    "20k": {"users": 20000, "interactions_per_user_day": 40, "input_tokens_per_interaction": 2500, "output_tokens_per_interaction": 500, "working_days_per_month": 22, "office_hours_per_day": 12, "peak_hours_per_day": 2.0, "concurrent_user_ratio": 0.18, "peak_multiplier": 2.5, "desc": "corporación",
+     "_uc_src_sharepoint_cnt":22,"_uc_src_database_cnt":15,"_uc_src_web_scraping_cnt":15,"_uc_src_api_cnt":14,"_uc_src_pdf_dynamic_cnt":8,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"high"},
+    "35k": {"users": 35000, "interactions_per_user_day": 45, "input_tokens_per_interaction": 2500, "output_tokens_per_interaction": 600, "working_days_per_month": 22, "office_hours_per_day": 12, "peak_hours_per_day": 3.0, "concurrent_user_ratio": 0.20, "peak_multiplier": 2.5, "desc": "gran corporación",
+     "_uc_src_sharepoint_cnt":25,"_uc_src_database_cnt":18,"_uc_src_web_scraping_cnt":18,"_uc_src_api_cnt":16,"_uc_src_pdf_dynamic_cnt":10,"_uc_cap_agentic":True,"_uc_cap_anon":True,"_uc_cap_sso":True,"_uc_ens":"high"},
 }
 
 PRESET_KEYS = list(PRESETS.keys())
@@ -410,138 +452,210 @@ def apply_preset(name: str):
         for k, v in p.items():
             if k != "desc":
                 st.session_state[k] = v
-                st.session_state[f"{k}_s"] = v
-                st.session_state[f"{k}_n"] = v
+        st.session_state._uc_profile_prev = None
 
 
-def _sync_s_to_n(key):
-    st.session_state[f"{key}_n"] = st.session_state[f"{key}_s"]
-    st.session_state[key] = st.session_state[f"{key}_s"]
+# ---------------------------------------------------------------------------
+# CdU parameters
+# ---------------------------------------------------------------------------
+CDU_PROFILES = {
+    "simple":  {"label": "Simple",  "desc": "~10 fuentes",  "sources": {"sharepoint":3, "database":2, "web_scraping":2, "api":2, "pdf_dynamic":1}},
+    "medio":   {"label": "Medio",   "desc": "~20 fuentes",  "sources": {"sharepoint":6, "database":4, "web_scraping":4, "api":4, "pdf_dynamic":2}},
+    "grande":  {"label": "Grande",  "desc": "~40 fuentes",  "sources": {"sharepoint":12, "database":8, "web_scraping":8, "api":8, "pdf_dynamic":4}},
+    "complejo":{"label": "Complejo","desc": "50+ fuentes",  "sources": {"sharepoint":15, "database":10, "web_scraping":12, "api":10, "pdf_dynamic":5}},
+}
 
 
-def _sync_n_to_s(key):
-    st.session_state[f"{key}_s"] = st.session_state[f"{key}_n"]
-    st.session_state[key] = st.session_state[f"{key}_n"]
+def _apply_cdu_profile(prof_key):
+    p = CDU_PROFILES.get(prof_key)
+    if p:
+        for sk, sv in p["sources"].items():
+            st.session_state[f"_uc_src_{sk}_cnt"] = sv
 
 
-def slider_preciso(label, min_value, max_value, default, step, key, fmt="%d", fmt_n=None,
-                    help=None, label_visibility="visible"):
-    if fmt_n is None:
-        fmt_n = fmt
-    s_key = f"{key}_s"
-    n_key = f"{key}_n"
-    if s_key not in st.session_state:
-        st.session_state[s_key] = default
-    if n_key not in st.session_state:
-        st.session_state[n_key] = default
+def _render_cdu_params():
+    if "_uc_profile_prev" not in st.session_state:
+        st.session_state._uc_profile_prev = None
 
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        st.slider(
-            label, min_value=min_value, max_value=max_value,
-            value=st.session_state[s_key], step=step, key=s_key,
-            format=fmt, help=help, label_visibility=label_visibility,
-            on_change=lambda k=key: _sync_s_to_n(k),
-        )
-    with col2:
-        st.number_input(
-            label if label_visibility == "visible" else "",
-            min_value=min_value, max_value=max_value,
-            value=st.session_state[n_key], step=step, key=n_key,
-            format=fmt_n, label_visibility="collapsed",
-            on_change=lambda k=key: _sync_n_to_s(k),
-        )
+    prof_key = st.segmented_control(
+        "Perfil CdU", options=list(CDU_PROFILES.keys()),
+        format_func=lambda k: CDU_PROFILES[k]["label"], key="_uc_profile",
+        selection_mode="single",
+    )
+    p = CDU_PROFILES.get(prof_key)
+    if p:
+        st.caption(p["desc"])
+
+    if prof_key and prof_key != st.session_state.get("_uc_profile_prev"):
+        _apply_cdu_profile(prof_key)
+        st.session_state._uc_profile_prev = prof_key
+
+    st.markdown("**Fuentes**")
+    for key, label in [("sharepoint","SharePoint/Alfresco"), ("database","BD Oracle/SQL"),
+                        ("web_scraping","Web Scraping"), ("api","API REST"),
+                        ("pdf_dynamic","PDF Dinámico")]:
+        cnt = st.slider(label, 0, 50, value=st.session_state.get(f"_uc_src_{key}_cnt", 0), key=f"_uc_src_{key}_cnt")
+        if cnt > 0:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.number_input("Vol. (GB)", 0.0, 100000.0, value=st.session_state.get(f"_uc_src_{key}_vol", 10.0), step=10.0, key=f"_uc_src_{key}_vol")
+            with c2:
+                st.selectbox("Frecuencia", ["realtime","hourly","daily","weekly","monthly"],
+                    format_func=lambda x: {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}[x],
+                    key=f"_uc_src_{key}_freq")
+
+    st.markdown("**Capacidades**")
+    ccc = st.columns(3)
+    with ccc[0]: st.checkbox("IA Agéntica\n8.500€", key="_uc_cap_agentic")
+    with ccc[1]: st.checkbox("Anonimización\n3.500€", key="_uc_cap_anon")
+    with ccc[2]: st.checkbox("Autenticación SSO\n4.000€", key="_uc_cap_sso")
+
+    st.markdown("**Cumplimiento**")
+    st.select_slider("ENS", options=["none", "basic", "medium", "high"],
+        format_func=lambda x: {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}[x],
+        value=st.session_state.get("_uc_ens", "medium"), key="_uc_ens")
 
 
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
 def render_sidebar():
     with st.sidebar:
-        st.markdown(_("**Load Profile**"))
+        st.markdown("**Infra/Cloud**")
+        st.slider("Usuarios", 100, 35000, value=_gs("users", DEFAULT_USERS), step=100, key="users",
+                  help="Usuarios activos que interactúan con el asistente.")
+        st.slider("Interacciones/usuario/día", 1, 200, value=_gs("interactions_per_user_day", DEFAULT_INTERACTIONS_PER_USER_DAY), step=1, key="interactions_per_user_day")
+        st.slider("Tokens entrada/interacción", 100, 16000, value=_gs("input_tokens_per_interaction", DEFAULT_INPUT_TOKENS), step=100, key="input_tokens_per_interaction")
+        st.slider("Tokens salida/interacción", 50, 8000, value=_gs("output_tokens_per_interaction", DEFAULT_OUTPUT_TOKENS), step=50, key="output_tokens_per_interaction")
+        st.slider("Días laborables/mes", 1, 31, value=_gs("working_days_per_month", DEFAULT_WORKING_DAYS), step=1, key="working_days_per_month")
+        st.slider("Horas oficina/día", 1, 24, value=_gs("office_hours_per_day", DEFAULT_OFFICE_HOURS), step=1, key="office_hours_per_day")
+        st.slider("Horas pico/día", 0.1, 8.0, value=_gs("peak_hours_per_day", DEFAULT_PEAK_HOURS), step=0.1, key="peak_hours_per_day")
+        st.slider("Ratio concurrencia", 0.01, 1.0, value=_gs("concurrent_user_ratio", DEFAULT_CONCURRENT_RATIO), step=0.01, key="concurrent_user_ratio")
+        st.slider("Multiplicador pico", 1.0, 5.0, value=_gs("peak_multiplier", DEFAULT_PEAK_MULTIPLIER), step=0.5, key="peak_multiplier")
 
-        slider_preciso(_("Users"), 1, 500000, 5000, 1, "users",
-                       help=_("Active users interacting with the assistant."))
-        slider_preciso(_("Interactions/user/day"), 1, 200, 40, 1, "interactions_per_user_day",
-                       help=_("Avg conversations per user per day."))
-        slider_preciso(_("Input tokens/interaction"), 100, 16000, 1500, 100, "input_tokens_per_interaction",
-                       help=_("Avg prompt tokens per interaction."))
-        slider_preciso(_("Output tokens/interaction"), 50, 8000, 500, 50, "output_tokens_per_interaction",
-                       help=_("Avg response tokens per interaction."))
-        slider_preciso(_("Working days/month"), 1, 31, 22, 1, "working_days_per_month",
-                       help=_("Business days per month."))
-        slider_preciso(_("Office hours/day"), 1, 24, 10, 1, "office_hours_per_day",
-                       help=_("Hours of normal operation."))
-        slider_preciso(_("Peak hours/day"), 0.1, 8.0, 0.5, 0.1, "peak_hours_per_day", fmt="%.1f",
-                       help=_("Hours of concentrated peak demand."))
-        slider_preciso(_("Concurrent user ratio"), 0.01, 1.0, 0.15, 0.01, "concurrent_user_ratio", fmt="%.0f%%", fmt_n="%.2f",
-                       help=_("Fraction of total users active simultaneously. 15% = 750 concurrent at 5k users."))
-        slider_preciso(_("Peak multiplier"), 1.0, 5.0, 2.0, 0.5, "peak_multiplier", fmt="%.1f",
-                       help=_("How many times more concurrent users during peak (2 = double)."))
+        st.markdown("---")
+        st.markdown("**CdU**")
+        _render_cdu_params()
 
 
+# ---------------------------------------------------------------------------
+# Build data from UI state
+# ---------------------------------------------------------------------------
+def build_data_from_ui() -> dict:
+    lp = LoadProfile(
+        users=_gs("users", DEFAULT_USERS),
+        interactions_per_user_day=_gs("interactions_per_user_day", DEFAULT_INTERACTIONS_PER_USER_DAY),
+        input_tokens_per_interaction=_gs("input_tokens_per_interaction", DEFAULT_INPUT_TOKENS),
+        output_tokens_per_interaction=_gs("output_tokens_per_interaction", DEFAULT_OUTPUT_TOKENS),
+        working_days_per_month=_gs("working_days_per_month", DEFAULT_WORKING_DAYS),
+        office_hours_per_day=_gs("office_hours_per_day", DEFAULT_OFFICE_HOURS),
+        peak_hours_per_day=_gs("peak_hours_per_day", DEFAULT_PEAK_HOURS),
+        concurrent_user_ratio=_gs("concurrent_user_ratio", DEFAULT_CONCURRENT_RATIO),
+        peak_multiplier=_gs("peak_multiplier", DEFAULT_PEAK_MULTIPLIER),
+    )
+
+    infra_ideal = AKSInfrastructure(name="LLM on AKS (Ideal UX)")
+    infra_ideal.system_nodepool = NodepoolConfig(
+        vm_type="Standard_D8ds_v5", base_office_nodes=1,
+        price_per_hour=_gs("system_price", DEFAULT_SYSTEM_PRICE),
+    )
+    infra_ideal.inference_nodepool = NodepoolConfig(
+        vm_type="Standard_NC24ads_A100_v4",
+        base_office_nodes=3, peak_nodes=10, off_hours_nodes=1,
+        price_per_hour=_gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE),
+    )
+    infra_ideal.throughput_tok_s_per_pod = _gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT)
+    infra_ideal.gpu_utilization = _gs("gpu_utilization", DEFAULT_GPU_UTILIZATION)
+    infra_ideal.safety_factor = _gs("safety_factor", DEFAULT_SAFETY_FACTOR)
+    infra_ideal.base_replicas = 3
+    infra_ideal.peak_replicas = 10
+    infra_ideal.off_hours_replicas = 1
+    infra_ideal.storage_cost_per_month = _gs("ideal_storage", DEFAULT_STORAGE_IDEAL)
+    infra_ideal.lb_cost_per_month = _gs("ideal_lb", DEFAULT_LB)
+    infra_ideal.monitor_cost_per_month = _gs("ideal_monitor", DEFAULT_MONITOR_IDEAL)
+    infra_ideal.acr_cost_per_month = _gs("ideal_acr", DEFAULT_ACR_IDEAL)
+
+    infra_economy = AKSInfrastructure(name="LLM on AKS (Economy UX)")
+    infra_economy.system_nodepool = NodepoolConfig(
+        vm_type="Standard_D8ds_v5", base_office_nodes=1,
+        price_per_hour=_gs("system_price", DEFAULT_SYSTEM_PRICE),
+    )
+    infra_economy.inference_nodepool = NodepoolConfig(
+        vm_type="Standard_NV12ads_A10_v5",
+        base_office_nodes=5, peak_nodes=20, off_hours_nodes=1,
+        price_per_hour=_gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE),
+    )
+    infra_economy.throughput_tok_s_per_pod = _gs("eco_throughput", DEFAULT_ECO_THROUGHPUT)
+    infra_economy.gpu_utilization = _gs("gpu_utilization", DEFAULT_GPU_UTILIZATION)
+    infra_economy.safety_factor = _gs("safety_factor", DEFAULT_SAFETY_FACTOR)
+    infra_economy.base_replicas = 5
+    infra_economy.peak_replicas = 20
+    infra_economy.off_hours_replicas = 1
+    infra_economy.storage_cost_per_month = _gs("eco_storage", DEFAULT_STORAGE_ECO)
+    infra_economy.lb_cost_per_month = _gs("eco_lb", DEFAULT_LB)
+    infra_economy.monitor_cost_per_month = _gs("eco_monitor", DEFAULT_MONITOR_ECO)
+    infra_economy.acr_cost_per_month = _gs("eco_acr", DEFAULT_ACR_ECO)
+
+    api = APIConfig(
+        name="API Azure OpenAI",
+        model=_gs("api_model", DEFAULT_API_MODEL),
+        input_price_per_1m_tokens_usd=_gs("api_input_price", DEFAULT_API_INPUT_PRICE),
+        output_price_per_1m_tokens_usd=_gs("api_output_price", DEFAULT_API_OUTPUT_PRICE),
+        eur_usd_rate=_gs("eur_usd_rate", DEFAULT_EUR_USD),
+    )
+
+    return {
+        "load_profile": lp,
+        "infra_ideal": infra_ideal,
+        "infra_economica": infra_economy,
+        "api_config": api,
+        "comparativa": pd.DataFrame(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
 def fmt_eur(v: float) -> str:
     if v >= 1_000_000:
-        return f"{v/1_000_000:.2f}M EUR"
-    return f"{v:,.0f} EUR"
+        return f"{v/1_000_000:.2f}M €"
+    return f"{v:,.0f} €"
 
 
 def fmt_period(v: float) -> str:
     yr = v * 12
     if yr >= 1_000_000:
-        return f"{fmt_eur(v)}/mo ({yr/1_000_000:.2f}M/yr)"
-    return f"{fmt_eur(v)}/mo ({yr:,.0f}/yr)"
+        return f"{fmt_eur(v)}/mes ({yr/1_000_000:.2f}M €/año)"
+    return f"{fmt_eur(v)}/mes ({yr:,.0f} €/año)"
 
 
-def render_controls():
-    with st.expander(_("Pricing & simulation settings"), expanded=False):
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown(_("_GPU_"))
-            st.number_input(_("A100 GPU/hr"), min_value=0.01, value=6.0, key="ideal_gpu_price", step=0.1, format="%.2f", label_visibility="collapsed")
-            st.number_input(_("A10 GPU/hr"), min_value=0.01, value=2.2, key="eco_gpu_price", step=0.1, format="%.2f", label_visibility="collapsed")
-        with col2:
-            st.markdown(_("_API_"))
-            st.text_input(_("Model"), value="gpt-4o", key="api_model", label_visibility="collapsed")
-            st.number_input(_("Input $/1M tok"), min_value=0.0, value=2.5, key="api_input_price", step=0.1, format="%.2f", label_visibility="collapsed")
-            st.number_input(_("Output $/1M tok"), min_value=0.0, value=10.0, key="api_output_price", step=0.1, format="%.2f", label_visibility="collapsed")
-        with col3:
-            st.markdown(_("_Simulation_"))
-            st.number_input(_("MC iterations"), min_value=100, value=5000, key="mc_iterations", step=100, label_visibility="collapsed")
-            st.number_input(_("HA factor"), min_value=1.0, max_value=2.0, value=1.15, key="ha_factor", step=0.01, format="%.2f", label_visibility="collapsed")
-            st.number_input(_("Overhead"), min_value=0.0, max_value=1.0, value=0.10, key="overhead_factor", step=0.05, format="%.2f", label_visibility="collapsed")
-        with col4:
-            st.markdown(_("_Exchange_"))
-            st.number_input(_("EUR/USD"), min_value=0.5, max_value=2.0, value=0.92, key="eur_usd_rate", step=0.01, format="%.2f", label_visibility="collapsed")
-
-        with st.expander(_("Machine details & settings")):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(_("_Sizing_"))
-                st.number_input(_("System node/hr"), min_value=0.01, value=0.8, key="system_price", step=0.01, format="%.2f", label_visibility="collapsed")
-                st.number_input(_("A100 throughput (tok/s)"), min_value=1, value=350, key="ideal_throughput", step=10, label_visibility="collapsed")
-                st.number_input(_("A10 throughput (tok/s)"), min_value=1, value=120, key="eco_throughput", step=10, label_visibility="collapsed")
-                st.number_input(_("GPU utilization"), min_value=0.0, max_value=1.0, value=0.75, key="gpu_utilization", step=0.05, label_visibility="collapsed")
-                st.number_input(_("Safety factor"), min_value=0.0, max_value=2.0, value=1.0, key="safety_factor", step=0.05, label_visibility="collapsed")
-            with c2:
-                st.markdown(_("_Infrastructure (EUR/mo)_"))
-                st.number_input(_("Ideal storage"), min_value=0, value=200, key="ideal_storage", step=10, label_visibility="collapsed")
-                st.number_input(_("Ideal LB"), min_value=0, value=60, key="ideal_lb", step=5, label_visibility="collapsed")
-                st.number_input(_("Ideal monitor"), min_value=0, value=150, key="ideal_monitor", step=10, label_visibility="collapsed")
-                st.number_input(_("Ideal ACR"), min_value=0, value=140, key="ideal_acr", step=10, label_visibility="collapsed")
-                st.number_input(_("Eco storage"), min_value=0, value=140, key="eco_storage", step=10, label_visibility="collapsed")
-                st.number_input(_("Eco LB"), min_value=0, value=60, key="eco_lb", step=5, label_visibility="collapsed")
-                st.number_input(_("Eco monitor"), min_value=0, value=120, key="eco_monitor", step=10, label_visibility="collapsed")
-                st.number_input(_("Eco ACR"), min_value=0, value=100, key="eco_acr", step=10, label_visibility="collapsed")
+# ---------------------------------------------------------------------------
+# Build InfoSource list from UI state
+# ---------------------------------------------------------------------------
+def _build_uc_sources():
+    sources = []
+    for key in CDU_SOURCE_KEYS:
+        cnt = st.session_state.get(f"_uc_src_{key}_cnt", 0)
+        if cnt > 0:
+            for i in range(cnt):
+                sources.append(InfoSource(
+                    name=f"{key}_{i+1}",
+                    source_type=key,
+                    complexity="medium",
+                    data_volume_gb=st.session_state.get(f"_uc_src_{key}_vol", 10.0),
+                    update_frequency=st.session_state.get(f"_uc_src_{key}_freq", "daily"),
+                ))
+    return sources
 
 
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
 def generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted):
-    buf_left_eco = io.BytesIO()
-    buf_left_ideal = io.BytesIO()
-    buf_right = io.BytesIO()
-
-    categories = ["System", "GPU", "Storage", "LB", "Monitor", "ACR"]
-    for sc_filter, sc_color, buf in [
-        ("Economico", "#27ae60", buf_left_eco), ("Ideal", "#2c6b9e", buf_left_ideal),
-    ]:
+    def _make_bar_chart(sc_filter, sc_color):
+        buf = io.BytesIO()
         row = df[df["scenario"].str.contains(sc_filter, case=False)].iloc[0]
+        categories = ["System", "GPU", "Storage", "LB", "Monitor", "ACR"]
         vals = [row.get(c, 0) for c in ["aks_system_cost_eur", "aks_gpu_cost_eur",
                  "storage_cost_eur", "lb_cost_eur", "monitor_cost_eur", "acr_cost_eur"]]
         fig, ax = plt.subplots(figsize=(5, 2.2), facecolor="#fafafa")
@@ -559,40 +673,43 @@ def generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor
         fig.savefig(buf, format="png", dpi=200)
         plt.close(fig)
         buf.seek(0)
+        return buf
 
-    names = df["scenario"].tolist()
-    totals = df["total_cost_eur"].tolist()
-    bar_colors = ["#2c6b9e", "#27ae60", "#d35400"]
-    fig2, ax2 = plt.subplots(figsize=(6, 3), facecolor="#fafafa")
-    ax2.bar(names, totals, color=bar_colors, width=0.5, edgecolor="white")
-    for bar, val in zip(ax2.patches, totals):
-        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                 f"{val:,.0f} EUR", ha="center", va="bottom", fontsize=8, fontweight="bold")
-    ax2.spines["top"].set_visible(False)
-    ax2.spines["right"].set_visible(False)
-    ax2.grid(axis="y", alpha=0.2)
-    ax2.set_ylim(0, max(totals) * 1.2)
-    plt.tight_layout()
-    fig2.savefig(buf_right, format="png", dpi=200)
-    plt.close(fig2)
-    buf_right.seek(0)
+    def _make_total_chart():
+        buf = io.BytesIO()
+        names = df["scenario"].tolist()
+        totals = df["total_cost_eur"].tolist()
+        bar_colors = ["#2c6b9e", "#27ae60", "#d35400"]
+        fig2, ax2 = plt.subplots(figsize=(6, 3), facecolor="#fafafa")
+        ax2.bar(names, totals, color=bar_colors, width=0.5, edgecolor="white")
+        for bar, val in zip(ax2.patches, totals):
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{val:,.0f} EUR", ha="center", va="bottom", fontsize=8, fontweight="bold")
+        ax2.spines["top"].set_visible(False)
+        ax2.spines["right"].set_visible(False)
+        ax2.grid(axis="y", alpha=0.2)
+        ax2.set_ylim(0, max(totals) * 1.2)
+        plt.tight_layout()
+        fig2.savefig(buf, format="png", dpi=200)
+        plt.close(fig2)
+        buf.seek(0)
+        return buf
+
+    buf_left_eco = _make_bar_chart("Economico", "#27ae60")
+    buf_left_ideal = _make_bar_chart("Ideal", "#2c6b9e")
+    buf_right = _make_total_chart()
 
     def img_b64(buf):
         return base64.b64encode(buf.read()).decode("utf-8")
-
-    img_left_eco_b64 = img_b64(buf_left_eco)
-    img_left_ideal_b64 = img_b64(buf_left_ideal)
-    img_right_b64 = img_b64(buf_right)
 
     best_row = df_sorted.iloc[0]
     second_row = df_sorted.iloc[1]
     third_row = df_sorted.iloc[2]
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-
     lang_label = st.session_state.get("lang", "en").lower()
     t = lambda s: LANG.get(lang_label, {}).get(s, s)
 
-    html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="{lang_label}">
 <head><meta charset="utf-8"><title>{t("Azure AKS + LLM Cost Simulator")}</title>
 <style>
@@ -604,7 +721,6 @@ th, td {{ border: 1px solid #ccc; padding: 1px 4px; text-align: left; }}
 th {{ background: #1557a0; color: #fff; font-weight: 600; }}
 tr:nth-child(even) {{ background: #f7f9fc; }}
 tr:nth-child(odd) {{ background: #fff; }}
-tr:hover {{ background: #e8f0fe; }}
 .winner {{ background: #d4edda; border: 2px solid #1a6b3c; border-radius: 4px; padding: 6px 10px; text-align: center; font-size: 0.9rem; font-weight: bold; color: #1a6b3c; margin: 6px 0; }}
 .caption {{ font-size: 0.65rem; color: #666; margin-top: 2px; }}
 .chart {{ margin: 4px 0; }}
@@ -633,35 +749,34 @@ tr:hover {{ background: #e8f0fe; }}
 <h2>{t("Machine details & settings")}</h2>
 <table>
 <tr><th>{t("GPU")}</th><th>{t("API")}</th></tr>
-<tr><td>A100 GPU/hr: {st.session_state.get("ideal_gpu_price", 6.0):.2f} EUR</td><td>{t("Model")}: {st.session_state.get("api_model", "gpt-4o")}</td></tr>
-<tr><td>A10 GPU/hr: {st.session_state.get("eco_gpu_price", 2.2):.2f} EUR</td><td>{t("Input $/1M tok")}: {st.session_state.get("api_input_price", 2.5):.2f}</td></tr>
-<tr><td>{t("System node/hr")}: {st.session_state.get("system_price", 0.8):.2f} EUR</td><td>{t("Output $/1M tok")}: {st.session_state.get("api_output_price", 10.0):.2f}</td></tr>
-<tr><td>{t("A100 throughput (tok/s)")}: {st.session_state.get("ideal_throughput", 350)}</td><td>{t("EUR/USD rate")}: {st.session_state.get("eur_usd_rate", 0.92)}</td></tr>
-<tr><td>{t("A10 throughput (tok/s)")}: {st.session_state.get("eco_throughput", 120)}</td><td></td></tr>
+<tr><td>A100 GPU/hr: {_gs('ideal_gpu_price', DEFAULT_IDEAL_GPU_PRICE):.2f} EUR</td><td>{t("Model")}: {_gs('api_model', DEFAULT_API_MODEL)}</td></tr>
+<tr><td>A10 GPU/hr: {_gs('eco_gpu_price', DEFAULT_ECO_GPU_PRICE):.2f} EUR</td><td>{t("Input $/1M tok")}: {_gs('api_input_price', DEFAULT_API_INPUT_PRICE):.2f}</td></tr>
+<tr><td>{t("System node/hr")}: {_gs('system_price', DEFAULT_SYSTEM_PRICE):.2f} EUR</td><td>{t("Output $/1M tok")}: {_gs('api_output_price', DEFAULT_API_OUTPUT_PRICE):.2f}</td></tr>
+<tr><td>{t("A100 throughput (tok/s)")}: {_gs('ideal_throughput', DEFAULT_IDEAL_THROUGHPUT)}</td><td>{t("EUR/USD rate")}: {_gs('eur_usd_rate', DEFAULT_EUR_USD)}</td></tr>
+<tr><td>{t("A10 throughput (tok/s)")}: {_gs('eco_throughput', DEFAULT_ECO_THROUGHPUT)}</td><td></td></tr>
 </table>
 
 <h2>{t("Costs")}</h2>
-<div class="chart"><img src="data:image/png;base64,{img_left_eco_b64}" style="width:45%;display:inline-block" />
-<img src="data:image/png;base64,{img_left_ideal_b64}" style="width:45%;display:inline-block" /></div>
-<div class="chart"><img src="data:image/png;base64,{img_right_b64}" style="width:70%" /></div>
+<div class="chart"><img src="data:image/png;base64,{img_b64(buf_left_eco)}" style="width:45%;display:inline-block" />
+<img src="data:image/png;base64,{img_b64(buf_left_ideal)}" style="width:45%;display:inline-block" /></div>
+<div class="chart"><img src="data:image/png;base64,{img_b64(buf_right)}" style="width:70%" /></div>
 
 <table>
-<tr><th>{t("Scenario")}</th><th>{t("Total (EUR)")}</th><th>Annual (EUR)</th><th>{t("GPU Cost (EUR)")}</th><th>{t("API LLM (EUR)")}</th><th>{t("Peak Nodes")}</th></tr>"""
-    for _, row in df.iterrows():
-        ann = row['total_cost_eur'] * 12
-        html += f"<tr><td>{row['scenario']}</td><td>{row['total_cost_eur']:,.0f}</td><td>{ann:,.0f}</td><td>{row['aks_gpu_cost_eur']:,.0f}</td><td>{row['api_llm_cost_eur']:,.0f}</td><td>{row['gpu_peak_nodes']}</td></tr>"
-    html += """</table>
-
+<tr><th>{t("Scenario")}</th><th>{t("Total (EUR)")}</th><th>{t("Annual (EUR)")}</th><th>{t("GPU Cost (EUR)")}</th><th>{t("API LLM (EUR)")}</th><th>{t("Peak Nodes")}</th></tr>""" + \
+    "".join(f"<tr><td>{r['scenario']}</td><td>{r['total_cost_eur']:,.0f}</td><td>{r['total_cost_eur']*12:,.0f}</td><td>{r['aks_gpu_cost_eur']:,.0f}</td><td>{r['api_llm_cost_eur']:,.0f}</td><td>{r['gpu_peak_nodes']}</td></tr>" for _, r in df.iterrows()) + \
+    """</table>
 <div class="footer">Azure AKS + LLM Cost Simulator</div>
 </body></html>"""
-    return html
 
 
-def tab_simulation(data: dict):
+# ---------------------------------------------------------------------------
+# Simulation tab
+# ---------------------------------------------------------------------------
+def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0):
     lp = data["load_profile"]
-    mc_iterations = st.session_state.get("mc_iterations", 5000)
-    ha_factor = st.session_state.get("ha_factor", 1.15)
-    overhead_factor = st.session_state.get("overhead_factor", 0.1)
+    mc_iterations = _gs("mc_iterations", 5000)
+    ha_factor = _gs("ha_factor", 1.15)
+    overhead_factor = _gs("overhead_factor", 0.1)
 
     cols = st.columns(5)
     with cols[0]:
@@ -675,33 +790,36 @@ def tab_simulation(data: dict):
     with cols[4]:
         st.metric(_("Days/mo"), str(lp.working_days_per_month))
 
-    with st.spinner(_("Running simulation...")):
-        df = simulate_all(
-            data,
-            mc_iterations=mc_iterations,
-            ha_factor=ha_factor,
-            overhead_factor=overhead_factor,
-            resize=True,
-        )
+    if df is None:
+        with st.spinner(_("Running simulation...")):
+            df = simulate_all(
+                data,
+                mc_iterations=mc_iterations,
+                ha_factor=ha_factor,
+                overhead_factor=overhead_factor,
+                resize=True,
+            )
 
     df_sorted = df.sort_values("total_cost_eur")
     best_row = df_sorted.iloc[0]
     second_row = df_sorted.iloc[1]
     third_row = df_sorted.iloc[2]
 
-    c_win, c_rest = st.columns(2)
+    c_win, c_rest = st.columns([1, 1])
     with c_win:
-        st.success(
-            f"### {_('WINNER')}: {best_row['scenario']}\n\n"
-            f"### {fmt_period(best_row['total_cost_eur'])}"
+        st.markdown(
+            f'<div class="winner-card"><h3>{_("WINNER")}: {best_row["scenario"]}</h3>'
+            f'<p class="winner-amount">{fmt_period(best_row["total_cost_eur"])}</p></div>',
+            unsafe_allow_html=True,
         )
     with c_rest:
-        st.info(
-            f"{second_row['scenario']}: {fmt_period(second_row['total_cost_eur'])}  \n"
-            f"{third_row['scenario']}: {fmt_period(third_row['total_cost_eur'])}"
+        st.markdown(
+            f'<div class="runner-card"><p style="margin:0">{second_row["scenario"]}: {fmt_period(second_row["total_cost_eur"])}</p>'
+            f'<p style="margin:0">{third_row["scenario"]}: {fmt_period(third_row["total_cost_eur"])}</p></div>',
+            unsafe_allow_html=True,
         )
 
-    col_left, col_right = st.columns([1, 1.6])
+    col_left, col_right = st.columns([1, 1.4])
     with col_left:
         categories = ["System", "GPU", "Storage", "LB", "Monitor", "ACR"]
         for sc_name, sc_filter, sc_color in [("Economico", "Economico", "#27ae60"), ("Ideal", "Ideal", "#2c6b9e")]:
@@ -711,15 +829,15 @@ def tab_simulation(data: dict):
                 row.get("storage_cost_eur", 0), row.get("lb_cost_eur", 0),
                 row.get("monitor_cost_eur", 0), row.get("acr_cost_eur", 0),
             ]
-            fig, ax = plt.subplots(figsize=(2.5, 0.9), facecolor="#fafafa")
-            bars = ax.bar(categories, vals, color=sc_color, width=0.6, edgecolor="white", linewidth=0.3)
-            for bar, val in zip(bars, vals):
+            fig, ax = plt.subplots(figsize=(4, 1.5), facecolor="#fafafa")
+            ax.bar(categories, vals, color=sc_color, width=0.6, edgecolor="white", linewidth=0.5)
+            for bar, val in zip(ax.patches, vals):
                 if val > 0:
                     ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                            f"{val:,.0f}", ha="center", va="bottom", fontsize=2.5, fontweight="bold")
-            ax.set_title(row["scenario"], fontsize=4.5, fontweight="bold")
-            ax.tick_params(axis="x", labelsize=3, pad=1)
-            ax.tick_params(axis="y", labelsize=3, pad=1)
+                            f"{val:,.0f}", ha="center", va="bottom", fontsize=5, fontweight="bold")
+            ax.set_title(row["scenario"], fontsize=7, fontweight="bold")
+            ax.tick_params(axis="x", labelsize=5, pad=1)
+            ax.tick_params(axis="y", labelsize=5, pad=1)
             ax.grid(axis="y", alpha=0.1, linewidth=0.3)
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
@@ -734,17 +852,17 @@ def tab_simulation(data: dict):
         names = df["scenario"].tolist()
         totals = df["total_cost_eur"].tolist()
         bar_colors = ["#2c6b9e", "#27ae60", "#d35400"]
-        fig2, ax2 = plt.subplots(figsize=(3.5, 1.5), facecolor="#fafafa")
-        bars = ax2.bar(names, totals, color=bar_colors, width=0.5, edgecolor="white", linewidth=0.4)
-        for bar, val in zip(bars, totals):
+        fig2, ax2 = plt.subplots(figsize=(5, 2.5), facecolor="#fafafa")
+        ax2.bar(names, totals, color=bar_colors, width=0.5, edgecolor="white", linewidth=0.5)
+        for bar, val in zip(ax2.patches, totals):
             ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                     f"{val:,.0f}/mo\n({val*12:,.0f}/yr)", ha="center", va="bottom", fontsize=4.5, fontweight="bold")
+                     f"{val:,.0f}/mes\n({val*12:,.0f}/año)", ha="center", va="bottom", fontsize=6, fontweight="bold")
         ax2.spines["top"].set_visible(False)
         ax2.spines["right"].set_visible(False)
-        ax2.tick_params(axis="x", labelsize=4, pad=1)
-        ax2.tick_params(axis="y", labelsize=4, pad=1)
-        ax2.grid(axis="y", alpha=0.1, linewidth=0.3)
-        ax2.set_ylim(0, max(totals) * 1.2)
+        ax2.tick_params(axis="x", labelsize=6, pad=1)
+        ax2.tick_params(axis="y", labelsize=6, pad=1)
+        ax2.grid(axis="y", alpha=0.15, linewidth=0.3)
+        ax2.set_ylim(0, max(totals) * 1.25)
         plt.tight_layout()
         st.pyplot(fig2)
         plt.close(fig2)
@@ -771,16 +889,111 @@ def tab_simulation(data: dict):
             use_container_width=True, hide_index=True,
         )
 
-    col_csv, col_html = st.columns([1, 1])
-    with col_csv:
-        csv_data = df.to_csv(index=False, encoding="utf-8-sig")
-        st.download_button(_("Export CSV"), csv_data, "simulation_results.csv", mime="text/csv")
+    col_xls, col_html = st.columns([1, 1])
+    with col_xls:
+        buf_xls = io.BytesIO()
+        ens_txt_det = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}.get(st.session_state.get("_uc_ens","medium"),"Medio")
+        caps_det = []
+        if st.session_state.get("_uc_cap_agentic"): caps_det.append("IA Agéntica (8.500€)")
+        if st.session_state.get("_uc_cap_anon"): caps_det.append("Anonimización (3.500€)")
+        if st.session_state.get("_uc_cap_sso"): caps_det.append("Autenticación SSO (4.000€)")
+        total_src_xls = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
+        sources_det = []
+        for k in CDU_SOURCE_KEYS:
+            c = st.session_state.get(f"_uc_src_{k}_cnt", 0)
+            if c > 0:
+                v = st.session_state.get(f"_uc_src_{k}_vol", 10.0)
+                f = st.session_state.get(f"_uc_src_{k}_freq", "daily")
+                sources_det.append({"Fuente": k, "Cantidad": c, "Vol. (GB)": v, "Frecuencia": f})
+        df_sources = pd.DataFrame(sources_det) if sources_det else pd.DataFrame()
+        with pd.ExcelWriter(buf_xls, engine="openpyxl") as writer:
+            # Sheet 1: Combined costs
+            if df_totales is not None and not df_totales.empty:
+                df_totales.to_excel(writer, sheet_name="Resumen", index=False)
+            # Sheet 2: Infra simulation
+            df_sim = df[["scenario","total_cost_eur","aks_gpu_cost_eur","api_llm_cost_eur",
+                         "aks_system_cost_eur","storage_cost_eur","lb_cost_eur",
+                         "monitor_cost_eur","acr_cost_eur","gpu_peak_nodes","mc_p50_eur","mc_p90_eur"]].copy()
+            df_sim.columns = ["Escenario","Total €","GPU €","API LLM €","Sistema €",
+                              "Almacenamiento €","LB €","Monitor €","ACR €","Nodos Pico","MC P50 €","MC P90 €"]
+            df_sim.to_excel(writer, sheet_name="Simulación", index=False)
+            # Sheet 3: Load profile
+            lp_data = pd.DataFrame([{
+                "Usuarios": lp.users,
+                "Interacciones/usuario/día": lp.interactions_per_user_day,
+                "Tokens entrada/interacción": lp.input_tokens_per_interaction,
+                "Tokens salida/interacción": lp.output_tokens_per_interaction,
+                "Días laborables/mes": lp.working_days_per_month,
+                "Horas oficina/día": lp.office_hours_per_day,
+                "Horas pico/día": lp.peak_hours_per_day,
+                "Ratio concurrencia": lp.concurrent_user_ratio,
+                "Multiplicador pico": lp.peak_multiplier,
+                "Concurrentes estimados": int(lp.users * lp.concurrent_user_ratio),
+                "Tokens/mes": lp.total_tokens_per_month,
+            }])
+            lp_data.to_excel(writer, sheet_name="Perfil Carga", index=False)
+            # Sheet 4: CdU
+            cdu_data = pd.DataFrame([{
+                "Total fuentes": total_src_xls,
+                "Capacidades": ", ".join(caps_det) if caps_det else "Ninguna",
+                "ENS": ens_txt_det,
+                "CAPEX implantación €": impl_cdu,
+                "OPEX recurrente/año €": rec_anual,
+            }])
+            cdu_data.to_excel(writer, sheet_name="CdU", index=False)
+            if not df_sources.empty:
+                df_sources.to_excel(writer, sheet_name="Fuentes CdU", index=False)
+            # Sheet 5: Prices (infra + CdU)
+            from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS
+            precios = pd.DataFrame([{
+                "A100 GPU/h €": _gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE),
+                "A10 GPU/h €": _gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE),
+                "Nodo sistema/h €": _gs("system_price", DEFAULT_SYSTEM_PRICE),
+                "Modelo API": _gs("api_model", DEFAULT_API_MODEL),
+                "Input $/1M tok": _gs("api_input_price", DEFAULT_API_INPUT_PRICE),
+                "Output $/1M tok": _gs("api_output_price", DEFAULT_API_OUTPUT_PRICE),
+                "EUR/USD": _gs("eur_usd_rate", DEFAULT_EUR_USD),
+                "HA factor": _gs("ha_factor", 1.15),
+                "Overhead": _gs("overhead_factor", 0.1),
+                "MC iteraciones": _gs("mc_iterations", 5000),
+                "CdU Integración SharePoint (low)": f"{SOURCE_INTEGRATION_TABLE['sharepoint']['low']} €",
+                "CdU Integración SharePoint (medium)": f"{SOURCE_INTEGRATION_TABLE['sharepoint']['medium']} €",
+                "CdU Integración SharePoint (high)": f"{SOURCE_INTEGRATION_TABLE['sharepoint']['high']} €",
+                "CdU Integración BD (low)": f"{SOURCE_INTEGRATION_TABLE['database']['low']} €",
+                "CdU Integración BD (medium)": f"{SOURCE_INTEGRATION_TABLE['database']['medium']} €",
+                "CdU Integración BD (high)": f"{SOURCE_INTEGRATION_TABLE['database']['high']} €",
+                "CdU Integración Web Scraping (low)": f"{SOURCE_INTEGRATION_TABLE['web_scraping']['low']} €",
+                "CdU Integración Web Scraping (medium)": f"{SOURCE_INTEGRATION_TABLE['web_scraping']['medium']} €",
+                "CdU Integración Web Scraping (high)": f"{SOURCE_INTEGRATION_TABLE['web_scraping']['high']} €",
+                "CdU Integración API REST (low)": f"{SOURCE_INTEGRATION_TABLE['api']['low']} €",
+                "CdU Integración API REST (medium)": f"{SOURCE_INTEGRATION_TABLE['api']['medium']} €",
+                "CdU Integración API REST (high)": f"{SOURCE_INTEGRATION_TABLE['api']['high']} €",
+                "CdU Integración PDF Dinámico (low)": f"{SOURCE_INTEGRATION_TABLE['pdf_dynamic']['low']} €",
+                "CdU Integración PDF Dinámico (medium)": f"{SOURCE_INTEGRATION_TABLE['pdf_dynamic']['medium']} €",
+                "CdU Integración PDF Dinámico (high)": f"{SOURCE_INTEGRATION_TABLE['pdf_dynamic']['high']} €",
+                "CdU Capacidad IA Agéntica CAPEX": f"{CAPABILITY_COSTS['agentic_ai']['capex']} €",
+                "CdU Capacidad IA Agéntica OPEX/mes": f"{CAPABILITY_COSTS['agentic_ai']['opex_monthly']} €",
+                "CdU Capacidad Anonimización CAPEX": f"{CAPABILITY_COSTS['anonymization']['capex']} €",
+                "CdU Capacidad Anonimización OPEX/mes": f"{CAPABILITY_COSTS['anonymization']['opex_monthly']} €",
+                "CdU Capacidad SSO CAPEX": f"{CAPABILITY_COSTS['sso']['capex']} €",
+                "CdU Capacidad SSO OPEX/mes": f"{CAPABILITY_COSTS['sso']['opex_monthly']} €",
+                "CdU ENS Ninguno CAPEX": f"{ENS_COSTS['none']['capex']} €",
+                "CdU ENS Básico CAPEX": f"{ENS_COSTS['basic']['capex']} €",
+                "CdU ENS Medio CAPEX": f"{ENS_COSTS['medium']['capex']} €",
+                "CdU ENS Alto CAPEX": f"{ENS_COSTS['high']['capex']} €",
+            }])
+            precios.to_excel(writer, sheet_name="Precios", index=False)
+        buf_xls.seek(0)
+        st.download_button("Exportar Excel", data=buf_xls, file_name="costes_completos.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with col_html:
         html_data = generate_report_html(lp, df, data, mc_iterations, ha_factor, overhead_factor, df_sorted)
-        st.download_button(_("Export HTML"), html_data, "simulation_report.html", mime="text/html")
-    st.caption("To save as PDF: open the HTML file in a browser and press Ctrl+P, then select 'Save as PDF'.")
+        st.download_button("Exportar HTML", html_data, "simulation_report.html", mime="text/html")
 
 
+# ---------------------------------------------------------------------------
+# Azure Pricing tab
+# ---------------------------------------------------------------------------
 def tab_azure_pricing(data: dict):
     st.markdown(_("**Azure Retail Prices (real-time from API)**"))
     st.caption(
@@ -861,11 +1074,10 @@ def tab_azure_pricing(data: dict):
 """)
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
-    if "_prev_preset" not in st.session_state:
-        st.session_state._prev_preset = None
-        st.session_state._preset_sel = "6k"
-
     col_lang_spacer, col_lang = st.columns([8, 1])
     with col_lang:
         st.segmented_control(
@@ -873,11 +1085,12 @@ def main():
             selection_mode="single", label_visibility="collapsed",
         )
 
-    st.markdown(_("**Azure AKS + LLM Cost Simulator**"))
-    st.caption(_("Compare AKS (Ideal/Economy) vs Azure OpenAI API for virtual assistants"))
+    st.markdown("**Simulador de Costes de Asistentes Virtuales**")
+    st.caption("Comparativa AKS (Ideal/Económico) vs Azure OpenAI API + costes de implantación por caso de uso")
 
+    # Azure defaults
     if "_azure_defaults" not in st.session_state:
-        rate = st.session_state.get("eur_usd_rate", 0.92)
+        rate = _gs("eur_usd_rate", DEFAULT_EUR_USD)
         import azure_pricing
         prices = azure_pricing.fetch_azure_prices(eur_usd_rate=rate)
         if prices.success:
@@ -899,43 +1112,213 @@ def main():
                 defaults["eco_acr"] = round(by_key["container_registry"] * 30, 2)
             st.session_state._azure_defaults = defaults
             for k, v in defaults.items():
-                if k not in st.session_state:
-                    st.session_state[k] = v
-                    st.session_state[f"{k}_s"] = v
-                    st.session_state[f"{k}_n"] = v
+                st.session_state[k] = v
         else:
             st.session_state._azure_defaults = {}
 
-    if st.session_state._azure_defaults:
-        azure_keys = st.session_state._azure_defaults
+    if _gs("_azure_defaults", None):
+        azure_keys = _gs("_azure_defaults", {})
         st.caption(
             f"GPU prices loaded from Azure: A100 = {azure_keys.get('ideal_gpu_price', 6.0):.2f} EUR/h, "
             f"A10 = {azure_keys.get('eco_gpu_price', 2.2):.2f} EUR/h, "
             f"System = {azure_keys.get('system_price', 0.8):.2f} EUR/h"
         )
 
-    current_preset = st.segmented_control(
-        _("Quick preset"), options=list(PRESET_KEYS),
-        format_func=lambda k: k.split(" - ", 1)[1] if " - " in k else k,
-        key="_preset_sel", default="6k",
-        selection_mode="single", help=_("Auto-fill business parameters."),
-    )
-    p = PRESETS.get(current_preset)
-    if p:
-        st.caption(_(p["desc"]))
-    if current_preset != st.session_state._prev_preset:
-        apply_preset(current_preset)
-        st.session_state._prev_preset = current_preset
-        st.rerun()
+    # Apply default preset on first run
+    if "_preset_applied" not in st.session_state:
+        apply_preset("750")
+        st.session_state._preset_applied = True
+
+    # Top row: Preset selector + CdU summary card
+    col_pre, col_cdu = st.columns([1.5, 1])
+    with col_pre:
+        st.segmented_control(
+            _("Quick preset"), options=list(PRESET_KEYS),
+            format_func=lambda k: {"100":"100","200":"200","500":"500","750":"750",
+                                   "1k":"1k","2k":"2k","3k":"3k","6k":"6k",
+                                   "10k":"10k","20k":"20k","35k":"35k"}.get(k, k),
+            key="_preset_sel", default="750",
+            selection_mode="single", help=_("Auto-fill business parameters."),
+            on_change=lambda: apply_preset(st.session_state._preset_sel),
+        )
+        p = PRESETS.get(_gs("_preset_sel", "750"))
+        if p:
+            st.caption(f"{p['users']:,.0f} usuarios")
+
+    with col_cdu:
+        total_src = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
+        caps_list = []
+        if st.session_state.get("_uc_cap_agentic"): caps_list.append("IA Agéntica")
+        if st.session_state.get("_uc_cap_anon"): caps_list.append("Anonimización")
+        if st.session_state.get("_uc_cap_sso"): caps_list.append("SSO")
+        ens_txt = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}.get(st.session_state.get("_uc_ens","medium"),"Medio")
+        st.markdown(
+            f'<div class="cdu-card">'
+            f'<strong>CdU</strong>: {total_src} {_("sources")} &middot; {", ".join(caps_list) if caps_list else _("sin caps.")} &middot; ENS {ens_txt}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     render_sidebar()
-    render_controls()
     data = build_data_from_ui()
 
-    tab1, tab2 = st.tabs([_("Simulation"), _("Azure Pricing")])
-    with tab1:
-        tab_simulation(data)
-    with tab2:
+    # Compute CdU costs
+    sources = _build_uc_sources()
+    enabled_caps = [k for k, v in [("agentic_ai","_uc_cap_agentic"),("anonymization","_uc_cap_anon"),("sso","_uc_cap_sso")] if st.session_state.get(v)]
+    ens_level = st.session_state.get("_uc_ens", "medium")
+
+    mc_iter = _gs("mc_iterations", 5000)
+    cdu_result = calculate_usecase_cost(sources, enabled_caps, ens_level, business_params=None, deployment="economy")
+    impl_cdu = cdu_result.total_capex
+    rec_anual = (cdu_result.source_maintenance_opex + cdu_result.capabilities_opex) * 12
+
+    # Combined cost table with visual styling
+    with st.container(border=True):
+        st.markdown("**Costes combinados — CdU + Infraestructura Cloud**")
+        with st.spinner("Simulando infraestructura cloud..."):
+            df_infra = simulate_all(data, mc_iterations=mc_iter, resize=True)
+
+        total_src = sum(st.session_state.get(f"_uc_src_{k}_cnt", 0) for k in CDU_SOURCE_KEYS)
+        caps_names = []
+        if st.session_state.get("_uc_cap_agentic"): caps_names.append("IA Agéntica")
+        if st.session_state.get("_uc_cap_anon"): caps_names.append("Anonimización")
+        if st.session_state.get("_uc_cap_sso"): caps_names.append("SSO")
+        ens_nombre = {"none":"-","basic":"ENS Básico","medium":"ENS Medio","high":"ENS Alto"}.get(st.session_state.get("_uc_ens","medium"),"ENS Medio")
+        cdu_tag = f"{total_src} fuentes · {ens_nombre}"
+        if caps_names:
+            cdu_tag += f" · {', '.join(caps_names)}"
+
+        # Build HTML table + df_totales for Excel
+        iconos = {"AKS UX Ideal":"\U0001f680", "AKS UX Economico":"\u2699\ufe0f", "API Azure OpenAI":"\u2601\ufe0f"}
+        colores = {"AKS UX Ideal":"#1e40af", "AKS UX Economico":"#15803d", "API Azure OpenAI":"#b45309"}
+        html_rows = ""
+        rows_totales = []
+        for _i, r in df_infra.iterrows():
+            sc = r["scenario"]
+            infra_anual = r["total_cost_eur"] * 12
+            ano_impl = impl_cdu + rec_anual + infra_anual
+            ano_sig = rec_anual + infra_anual
+            rows_totales.append({
+                "Escenario": cdu_tag + f"\n+ {sc}",
+                "Implant. CdU": f"{impl_cdu:,.0f} €",
+                "Recurrente/año": f"{rec_anual:,.0f} €",
+                "Infra Cloud/año": f"{infra_anual:,.0f} €",
+                "Año implantación": f"{ano_impl:,.0f} €",
+                "Año siguiente": f"{ano_sig:,.0f} €",
+            })
+            icono = iconos.get(sc, "")
+            cls = {"AKS UX Ideal":"ideal", "AKS UX Economico":"eco", "API Azure OpenAI":"api"}.get(sc, "")
+            bg = colores.get(sc, "#333")
+            html_rows += f"""<tr>
+                <td class="sc-{cls}" style="font-weight:700;background:{bg}18">{icono} {sc}</td>
+                <td style="text-align:right;font-weight:600">{impl_cdu:,.0f} €</td>
+                <td style="text-align:right;font-weight:600">{rec_anual:,.0f} €</td>
+                <td class="sc-{cls}" style="text-align:right;font-weight:700">{infra_anual:,.0f} €</td>
+                <td class="year1" style="text-align:right;font-weight:700">{ano_impl:,.0f} €</td>
+                <td style="text-align:right;font-weight:600">{ano_sig:,.0f} €</td>
+            </tr>"""
+        df_totales = pd.DataFrame(rows_totales)
+
+        html_table = f"""<div class="cost-table" style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px;font-size:0.8rem;">
+        <table style="width:100%;border-collapse:collapse;">
+        <thead>
+        <tr class="cost-table">
+            <th style="padding:0.5rem 0.6rem;text-align:left;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.03em;">Escenario</th>
+            <th style="padding:0.5rem 0.6rem;text-align:right;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.03em;">CdU Implant.</th>
+            <th style="padding:0.5rem 0.6rem;text-align:right;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.03em;">CdU Recur./año</th>
+            <th style="padding:0.5rem 0.6rem;text-align:right;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.03em;">Infra Cloud/año</th>
+            <th style="padding:0.5rem 0.6rem;text-align:right;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.03em;">Año implantación</th>
+            <th style="padding:0.5rem 0.6rem;text-align:right;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.03em;">Año siguiente</th>
+        </tr>
+        </thead>
+        <tbody>
+        {html_rows}
+        </tbody>
+        </table>
+        <div class="footer" style="padding:0.4rem 0.6rem;font-size:0.7rem;border-top:1px solid #e2e8f0;">
+            CdU: {cdu_tag} &middot; CAPEX único + recurrencia + infraestructura cloud
+        </div>
+        </div>"""
+
+        col_tab, col_res = st.columns([1.5, 1])
+        with col_tab:
+            st.markdown(html_table, unsafe_allow_html=True)
+        with col_res:
+            st.markdown(f'<div class="cdu-card">'
+                        f'<p><strong>CdU CAPEX (único):</strong> {impl_cdu:,.0f} €</p>'
+                        f'<p><strong>CdU recurrente/año:</strong> {rec_anual:,.0f} €</p>'
+                        f'<p><strong>Total infra cloud/año:</strong> '
+                        f'{df_infra["total_cost_eur"].min()*12:,.0f} - {df_infra["total_cost_eur"].max()*12:,.0f} €</p>'
+                        f'</div>',
+                        unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown("**Infraestructura Cloud — Simulación**")
+        tab_simulation(data, df=df_infra, df_totales=df_totales, impl_cdu=impl_cdu, rec_anual=rec_anual)
+
+    with st.expander("Precios y simulación"):
+        with st.container(border=True):
+            st.markdown("**Precios GPU y API**")
+            gc1, gc2 = st.columns(2)
+            with gc1:
+                st.number_input("A100 GPU/h", 0.01, value=_gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE), key="ideal_gpu_price", step=0.1, format="%.2f",
+                    help="Precio/h de NVIDIA A100 (NC24ads_A100_v4). Determina el coste AKS Ideal.")
+                st.text_input("Modelo API", value=_gs("api_model", DEFAULT_API_MODEL), key="api_model",
+                    help="Nombre del modelo Azure OpenAI de referencia.")
+                st.number_input("Output $/1M tok", 0.0, value=_gs("api_output_price", DEFAULT_API_OUTPUT_PRICE), key="api_output_price", step=0.1, format="%.2f",
+                    help="Precio USD por millón de tokens de salida del modelo API.")
+            with gc2:
+                st.number_input("A10 GPU/h", 0.01, value=_gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE), key="eco_gpu_price", step=0.1, format="%.2f",
+                    help="Precio/h de NVIDIA A10 (NV12ads_A10_v5). Determina el coste AKS Económico.")
+                st.number_input("Input $/1M tok", 0.0, value=_gs("api_input_price", DEFAULT_API_INPUT_PRICE), key="api_input_price", step=0.1, format="%.2f",
+                    help="Precio USD por millón de tokens de entrada (prompt) del modelo API.")
+                st.number_input("EUR/USD", 0.5, 2.0, value=_gs("eur_usd_rate", DEFAULT_EUR_USD), key="eur_usd_rate", step=0.01, format="%.2f",
+                    help="Tipo de cambio USD→EUR aplicado a tarifas Azure y OpenAI.")
+
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1:
+            st.number_input("Iteraciones MC", 100, value=_gs("mc_iterations", 5000), key="mc_iterations", step=100,
+                help="Iteraciones Monte Carlo. Más = más precisos P50/P90, pero más lento.")
+        with mc2:
+            st.number_input("HA factor", 1.0, 2.0, value=_gs("ha_factor", 1.15), key="ha_factor", step=0.01, format="%.2f",
+                help="Factor de alta disponibilidad sobre nodos GPU. 1.15 = +15% redundancia.")
+        with mc3:
+            st.number_input("Overhead pico", 0.0, 1.0, value=_gs("overhead_factor", 0.1), key="overhead_factor", step=0.05, format="%.2f",
+                help="Horas extra sobre ventana pico para escalados imprevistos.")
+
+        with st.expander("Detalles máquina e infraestructura"):
+            st.number_input("Nodo sistema/h", 0.01, value=_gs("system_price", DEFAULT_SYSTEM_PRICE), key="system_price", step=0.01, format="%.2f",
+                help="Coste/h del nodo sistema (Standard_D8ds_v5) para ingress y operadores AKS.")
+            c_sz, c_in = st.columns(2)
+            with c_sz:
+                st.caption("Rendimiento")
+                st.number_input("A100 tok/s", 1, value=_gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT), key="ideal_throughput", step=10,
+                    help="Throughput en tok/s en A100 con vLLM.")
+                st.number_input("A10 tok/s", 1, value=_gs("eco_throughput", DEFAULT_ECO_THROUGHPUT), key="eco_throughput", step=10,
+                    help="Throughput en tok/s en A10 con vLLM.")
+                st.number_input("Utilización GPU", 0.0, 1.0, value=_gs("gpu_utilization", DEFAULT_GPU_UTILIZATION), key="gpu_utilization", step=0.05,
+                    help="Fracción de capacidad GPU aprovechada de media.")
+                st.number_input("Factor seguridad", 0.0, 2.0, value=_gs("safety_factor", DEFAULT_SAFETY_FACTOR), key="safety_factor", step=0.05,
+                    help="Margen extra en dimensionado de nodos GPU.")
+            with c_in:
+                st.caption("Costes fijos mensuales")
+                st.number_input("Storage Ideal", 0, value=int(_gs("ideal_storage", DEFAULT_STORAGE_IDEAL)), key="ideal_storage", step=10,
+                    help="Almacenamiento mensual (OS disks + PVC) AKS Ideal.")
+                st.number_input("Storage Eco", 0, value=int(_gs("eco_storage", DEFAULT_STORAGE_ECO)), key="eco_storage", step=10,
+                    help="Almacenamiento mensual AKS Económico.")
+                st.number_input("LB", 0, value=int(_gs("ideal_lb", DEFAULT_LB)), key="ideal_lb", step=5,
+                    help="Load Balancer + IP pública mensual.")
+                st.number_input("Monitor Ideal", 0, value=int(_gs("ideal_monitor", DEFAULT_MONITOR_IDEAL)), key="ideal_monitor", step=10,
+                    help="Monitor + Log Analytics mensual AKS Ideal.")
+                st.number_input("Monitor Eco", 0, value=int(_gs("eco_monitor", DEFAULT_MONITOR_ECO)), key="eco_monitor", step=10,
+                    help="Monitor + Log Analytics mensual AKS Económico.")
+                st.number_input("ACR Ideal", 0, value=int(_gs("ideal_acr", DEFAULT_ACR_IDEAL)), key="ideal_acr", step=10,
+                    help="ACR + caché/cola mensual AKS Ideal.")
+                st.number_input("ACR Eco", 0, value=int(_gs("eco_acr", DEFAULT_ACR_ECO)), key="eco_acr", step=10,
+                    help="ACR + caché/cola mensual AKS Económico.")
+
+    with st.container(border=True):
+        st.markdown("**Azure Pricing**")
         tab_azure_pricing(data)
 
 

@@ -27,7 +27,7 @@ DEFAULT_OUTPUT_CSV: str = "resultados_simulacion.csv"
 DEFAULT_CHART_FILE: str = "comparativa_costes.png"
 
 # Load defaults
-DEFAULT_USERS: int = 6_000
+DEFAULT_USERS: int = 750
 DEFAULT_INTERACTIONS_PER_USER_DAY: int = 20
 DEFAULT_INPUT_TOKENS: int = 2_000
 DEFAULT_OUTPUT_TOKENS: int = 400

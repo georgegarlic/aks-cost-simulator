@@ -8,3 +8,5 @@ dist/
 *.csv
 *.png
 .env
+.streamlit/
+
