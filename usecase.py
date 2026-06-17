@@ -28,7 +28,10 @@ class InfoSource:
 
     @property
     def monthly_maintenance(self) -> float:
-        base = self.integration_cost * 0.10 / 12
+        pct = 0.10
+        if self.custom_pricing and "maintenance_pct" in self.custom_pricing:
+            pct = self.custom_pricing["maintenance_pct"]
+        base = self.integration_cost * pct / 12
         if self.custom_pricing and "freq_mult" in self.custom_pricing:
             freq_mult = self.custom_pricing["freq_mult"].get(self.update_frequency, 1.0)
         else:

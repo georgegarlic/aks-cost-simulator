@@ -651,7 +651,8 @@ def _build_cdu_custom_pricing():
     ens_costs = {}
     for ek in ENS_COSTS:
         ens_costs[ek] = {"capex": _gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"])}
-    return {"source_table": src_table, "freq_mult": freq_mult}, cap_costs, ens_costs
+    maint_pct = _gs("_cdu_maintenance_pct", 10.0) / 100.0
+    return {"source_table": src_table, "freq_mult": freq_mult, "maintenance_pct": maint_pct}, cap_costs, ens_costs
 
 
 def _build_uc_sources(custom_pricing=None):
@@ -998,6 +999,8 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
                 for cmp, cl in [("low","baja"),("medium","media"),("high","alta")]:
                     v = _gs(f"_cdu_src_{sk}_{cmp}", SOURCE_INTEGRATION_TABLE[sk][cmp])
                     ap("CdU", f"Integración {sl} ({cl})", f"{v:,.0f} €")
+            maint_pct = _gs("_cdu_maintenance_pct", 10.0)
+            ap("CdU", "Mantenimiento anual (%)", f"{maint_pct:.1f} %")
             for fk, fv in FREQUENCY_MULTIPLIERS.items():
                 fl = {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}
                 v = _gs(f"_cdu_freq_{fk}", fv)
@@ -1364,6 +1367,13 @@ def main():
                 with cols_ens[i]:
                     st.number_input(f"ENS {el}", 0, 50000,
                         value=_gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"]), step=500, key=f"_cdu_ens_{ek}_capex")
+
+            st.markdown("---")
+            st.caption("Soporte y mantenimiento — configurable")
+            st.number_input("% mantenimiento anual sobre coste integración",
+                0.0, 50.0, value=_gs("_cdu_maintenance_pct", 10.0), step=0.5, format="%.1f",
+                key="_cdu_maintenance_pct",
+                help="Porcentaje del coste de integración que se aplica anualmente en concepto de soporte y mantenimiento.")
 
             st.markdown("---")
             st.caption("Multiplicadores de frecuencia de actualización — configurables")
