@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -16,15 +16,23 @@ class InfoSource:
     complexity: str = "medium"
     data_volume_gb: float = 10.0
     update_frequency: str = "daily"
+    custom_pricing: Optional[Dict] = None
 
     @property
     def integration_cost(self) -> float:
+        if self.custom_pricing and "source_table" in self.custom_pricing:
+            table = self.custom_pricing["source_table"]
+            row = table.get(self.source_type, {})
+            return row.get(self.complexity, 5000)
         return _source_integration_cost(self.source_type, self.complexity)
 
     @property
     def monthly_maintenance(self) -> float:
         base = self.integration_cost * 0.10 / 12
-        freq_mult = _frequency_multiplier(self.update_frequency)
+        if self.custom_pricing and "freq_mult" in self.custom_pricing:
+            freq_mult = self.custom_pricing["freq_mult"].get(self.update_frequency, 1.0)
+        else:
+            freq_mult = _frequency_multiplier(self.update_frequency)
         return round(base * freq_mult, 2)
 
 
@@ -94,6 +102,8 @@ def calculate_usecase_cost(
     ens_level: str,
     business_params: Optional[dict] = None,
     deployment: str = "economy",
+    capability_costs: Optional[Dict] = None,
+    ens_costs: Optional[Dict] = None,
 ) -> UseCaseResult:
     result = UseCaseResult(sources=sources)
 
@@ -103,15 +113,17 @@ def calculate_usecase_cost(
     # --- CAPEX: Capabilities ---
     cap_capex = 0
     cap_opex = 0
+    cap_table = capability_costs or CAPABILITY_COSTS
     for cap in enabled_capabilities:
-        c = CAPABILITY_COSTS.get(cap, {})
+        c = cap_table.get(cap, {})
         cap_capex += c.get("capex", 0)
         cap_opex += c.get("opex_monthly", 0)
     result.capabilities_capex = cap_capex
     result.capabilities_opex = cap_opex
 
     # --- CAPEX: Compliance ---
-    result.compliance_capex = ENS_COSTS.get(ens_level, {}).get("capex", 0)
+    ens_table = ens_costs or ENS_COSTS
+    result.compliance_capex = ens_table.get(ens_level, {}).get("capex", 0)
 
     # --- Total CAPEX ---
     result.total_capex = (

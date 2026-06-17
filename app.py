@@ -632,7 +632,29 @@ def fmt_period(v: float) -> str:
 # ---------------------------------------------------------------------------
 # Build InfoSource list from UI state
 # ---------------------------------------------------------------------------
-def _build_uc_sources():
+def _build_cdu_custom_pricing():
+    from usecase import SOURCE_INTEGRATION_TABLE, FREQUENCY_MULTIPLIERS, CAPABILITY_COSTS, ENS_COSTS
+    src_table = {}
+    for sk in ["sharepoint","database","web_scraping","api","pdf_dynamic"]:
+        src_table[sk] = {}
+        for cmp in ["low","medium","high"]:
+            src_table[sk][cmp] = _gs(f"_cdu_src_{sk}_{cmp}", SOURCE_INTEGRATION_TABLE[sk][cmp])
+    freq_mult = {}
+    for fk in FREQUENCY_MULTIPLIERS:
+        freq_mult[fk] = _gs(f"_cdu_freq_{fk}", FREQUENCY_MULTIPLIERS[fk])
+    cap_costs = {}
+    for ck in CAPABILITY_COSTS:
+        cap_costs[ck] = {
+            "capex": _gs(f"_cdu_cap_{ck}_capex", CAPABILITY_COSTS[ck]["capex"]),
+            "opex_monthly": _gs(f"_cdu_cap_{ck}_opex", CAPABILITY_COSTS[ck]["opex_monthly"]),
+        }
+    ens_costs = {}
+    for ek in ENS_COSTS:
+        ens_costs[ek] = {"capex": _gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"])}
+    return {"source_table": src_table, "freq_mult": freq_mult}, cap_costs, ens_costs
+
+
+def _build_uc_sources(custom_pricing=None):
     sources = []
     for key in CDU_SOURCE_KEYS:
         cnt = st.session_state.get(f"_uc_src_{key}_cnt", 0)
@@ -644,6 +666,7 @@ def _build_uc_sources():
                     complexity="medium",
                     data_volume_gb=st.session_state.get(f"_uc_src_{key}_vol", 10.0),
                     update_frequency=st.session_state.get(f"_uc_src_{key}_freq", "daily"),
+                    custom_pricing=custom_pricing,
                 ))
     return sources
 
@@ -943,45 +966,51 @@ def tab_simulation(data: dict, df=None, df_totales=None, impl_cdu=0, rec_anual=0
             cdu_data.to_excel(writer, sheet_name="CdU", index=False)
             if not df_sources.empty:
                 df_sources.to_excel(writer, sheet_name="Fuentes CdU", index=False)
-            # Sheet 5: Prices (infra + CdU)
-            from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS
-            precios = pd.DataFrame([{
-                "A100 GPU/h €": _gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE),
-                "A10 GPU/h €": _gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE),
-                "Nodo sistema/h €": _gs("system_price", DEFAULT_SYSTEM_PRICE),
-                "Modelo API": _gs("api_model", DEFAULT_API_MODEL),
-                "Input $/1M tok": _gs("api_input_price", DEFAULT_API_INPUT_PRICE),
-                "Output $/1M tok": _gs("api_output_price", DEFAULT_API_OUTPUT_PRICE),
-                "EUR/USD": _gs("eur_usd_rate", DEFAULT_EUR_USD),
-                "HA factor": _gs("ha_factor", 1.15),
-                "Overhead": _gs("overhead_factor", 0.1),
-                "MC iteraciones": _gs("mc_iterations", 5000),
-                "CdU Integración SharePoint (low)": f"{SOURCE_INTEGRATION_TABLE['sharepoint']['low']} €",
-                "CdU Integración SharePoint (medium)": f"{SOURCE_INTEGRATION_TABLE['sharepoint']['medium']} €",
-                "CdU Integración SharePoint (high)": f"{SOURCE_INTEGRATION_TABLE['sharepoint']['high']} €",
-                "CdU Integración BD (low)": f"{SOURCE_INTEGRATION_TABLE['database']['low']} €",
-                "CdU Integración BD (medium)": f"{SOURCE_INTEGRATION_TABLE['database']['medium']} €",
-                "CdU Integración BD (high)": f"{SOURCE_INTEGRATION_TABLE['database']['high']} €",
-                "CdU Integración Web Scraping (low)": f"{SOURCE_INTEGRATION_TABLE['web_scraping']['low']} €",
-                "CdU Integración Web Scraping (medium)": f"{SOURCE_INTEGRATION_TABLE['web_scraping']['medium']} €",
-                "CdU Integración Web Scraping (high)": f"{SOURCE_INTEGRATION_TABLE['web_scraping']['high']} €",
-                "CdU Integración API REST (low)": f"{SOURCE_INTEGRATION_TABLE['api']['low']} €",
-                "CdU Integración API REST (medium)": f"{SOURCE_INTEGRATION_TABLE['api']['medium']} €",
-                "CdU Integración API REST (high)": f"{SOURCE_INTEGRATION_TABLE['api']['high']} €",
-                "CdU Integración PDF Dinámico (low)": f"{SOURCE_INTEGRATION_TABLE['pdf_dynamic']['low']} €",
-                "CdU Integración PDF Dinámico (medium)": f"{SOURCE_INTEGRATION_TABLE['pdf_dynamic']['medium']} €",
-                "CdU Integración PDF Dinámico (high)": f"{SOURCE_INTEGRATION_TABLE['pdf_dynamic']['high']} €",
-                "CdU Capacidad IA Agéntica CAPEX": f"{CAPABILITY_COSTS['agentic_ai']['capex']} €",
-                "CdU Capacidad IA Agéntica OPEX/mes": f"{CAPABILITY_COSTS['agentic_ai']['opex_monthly']} €",
-                "CdU Capacidad Anonimización CAPEX": f"{CAPABILITY_COSTS['anonymization']['capex']} €",
-                "CdU Capacidad Anonimización OPEX/mes": f"{CAPABILITY_COSTS['anonymization']['opex_monthly']} €",
-                "CdU Capacidad SSO CAPEX": f"{CAPABILITY_COSTS['sso']['capex']} €",
-                "CdU Capacidad SSO OPEX/mes": f"{CAPABILITY_COSTS['sso']['opex_monthly']} €",
-                "CdU ENS Ninguno CAPEX": f"{ENS_COSTS['none']['capex']} €",
-                "CdU ENS Básico CAPEX": f"{ENS_COSTS['basic']['capex']} €",
-                "CdU ENS Medio CAPEX": f"{ENS_COSTS['medium']['capex']} €",
-                "CdU ENS Alto CAPEX": f"{ENS_COSTS['high']['capex']} €",
-            }])
+            # Sheet 5: Prices (vertical con categoría InfraCloud / CdU)
+            from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS, FREQUENCY_MULTIPLIERS
+            rows_p = []
+            def ap(cat, param, val):
+                rows_p.append({"Categoría": cat, "Parámetro": param, "Valor": val})
+            ap("InfraCloud", "A100 GPU/h", f"{_gs('ideal_gpu_price', DEFAULT_IDEAL_GPU_PRICE):.2f} €")
+            ap("InfraCloud", "A10 GPU/h", f"{_gs('eco_gpu_price', DEFAULT_ECO_GPU_PRICE):.2f} €")
+            ap("InfraCloud", "Nodo sistema/h", f"{_gs('system_price', DEFAULT_SYSTEM_PRICE):.2f} €")
+            ap("InfraCloud", "Rendimiento A100 (tok/s)", str(_gs('ideal_throughput', DEFAULT_IDEAL_THROUGHPUT)))
+            ap("InfraCloud", "Rendimiento A10 (tok/s)", str(_gs('eco_throughput', DEFAULT_ECO_THROUGHPUT)))
+            ap("InfraCloud", "Utilización GPU", f"{_gs('gpu_utilization', DEFAULT_GPU_UTILIZATION):.0%}")
+            ap("InfraCloud", "Factor seguridad", f"{_gs('safety_factor', DEFAULT_SAFETY_FACTOR):.2f}")
+            ap("InfraCloud", "Storage Ideal/mes", f"{_gs('ideal_storage', DEFAULT_STORAGE_IDEAL):.0f} €")
+            ap("InfraCloud", "Storage Eco/mes", f"{_gs('eco_storage', DEFAULT_STORAGE_ECO):.0f} €")
+            ap("InfraCloud", "LB/mes", f"{_gs('ideal_lb', DEFAULT_LB):.0f} €")
+            ap("InfraCloud", "Monitor Ideal/mes", f"{_gs('ideal_monitor', DEFAULT_MONITOR_IDEAL):.0f} €")
+            ap("InfraCloud", "Monitor Eco/mes", f"{_gs('eco_monitor', DEFAULT_MONITOR_ECO):.0f} €")
+            ap("InfraCloud", "ACR Ideal/mes", f"{_gs('ideal_acr', DEFAULT_ACR_IDEAL):.0f} €")
+            ap("InfraCloud", "ACR Eco/mes", f"{_gs('eco_acr', DEFAULT_ACR_ECO):.0f} €")
+            ap("InfraCloud", "Modelo API", _gs('api_model', DEFAULT_API_MODEL))
+            ap("InfraCloud", "Input $/1M tok", f"{_gs('api_input_price', DEFAULT_API_INPUT_PRICE):.2f}")
+            ap("InfraCloud", "Output $/1M tok", f"{_gs('api_output_price', DEFAULT_API_OUTPUT_PRICE):.2f}")
+            ap("InfraCloud", "EUR/USD", f"{_gs('eur_usd_rate', DEFAULT_EUR_USD):.2f}")
+            ap("InfraCloud", "HA factor", f"{_gs('ha_factor', 1.15):.2f}")
+            ap("InfraCloud", "Overhead pico", f"{_gs('overhead_factor', 0.1):.0%}")
+            ap("InfraCloud", "MC iteraciones", str(_gs("mc_iterations", 5000)))
+            for sk in ["sharepoint","database","web_scraping","api","pdf_dynamic"]:
+                sl = {"sharepoint":"SharePoint/Alfresco","database":"BD Oracle/SQL",
+                      "web_scraping":"Web Scraping","api":"API REST","pdf_dynamic":"PDF Dinámico"}[sk]
+                for cmp, cl in [("low","baja"),("medium","media"),("high","alta")]:
+                    v = _gs(f"_cdu_src_{sk}_{cmp}", SOURCE_INTEGRATION_TABLE[sk][cmp])
+                    ap("CdU", f"Integración {sl} ({cl})", f"{v:,.0f} €")
+            for fk, fv in FREQUENCY_MULTIPLIERS.items():
+                fl = {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}
+                v = _gs(f"_cdu_freq_{fk}", fv)
+                ap("CdU", f"Multiplicador frecuencia {fl.get(fk,fk)}", f"{v:.2f}")
+            for ck, cl in [("agentic_ai","IA Agéntica"),("anonymization","Anonimización"),("sso","SSO")]:
+                capex = _gs(f"_cdu_cap_{ck}_capex", CAPABILITY_COSTS[ck]["capex"])
+                opex = _gs(f"_cdu_cap_{ck}_opex", CAPABILITY_COSTS[ck]["opex_monthly"])
+                ap("CdU", f"Capacidad {cl} CAPEX", f"{capex:,.0f} €")
+                ap("CdU", f"Capacidad {cl} OPEX/mes", f"{opex:,.0f} €")
+            for ek, el in [("none","Ninguno"),("basic","Básico"),("medium","Medio"),("high","Alto")]:
+                v = _gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"])
+                ap("CdU", f"ENS {el} CAPEX", f"{v:,.0f} €")
+            precios = pd.DataFrame(rows_p)
             precios.to_excel(writer, sheet_name="Precios", index=False)
         buf_xls.seek(0)
         st.download_button("Exportar Excel", data=buf_xls, file_name="costes_completos.xlsx",
@@ -1163,12 +1192,14 @@ def main():
     data = build_data_from_ui()
 
     # Compute CdU costs
-    sources = _build_uc_sources()
+    cdu_pricing, cap_costs, ens_costs = _build_cdu_custom_pricing()
+    sources = _build_uc_sources(custom_pricing=cdu_pricing)
     enabled_caps = [k for k, v in [("agentic_ai","_uc_cap_agentic"),("anonymization","_uc_cap_anon"),("sso","_uc_cap_sso")] if st.session_state.get(v)]
     ens_level = st.session_state.get("_uc_ens", "medium")
 
     mc_iter = _gs("mc_iterations", 5000)
-    cdu_result = calculate_usecase_cost(sources, enabled_caps, ens_level, business_params=None, deployment="economy")
+    cdu_result = calculate_usecase_cost(sources, enabled_caps, ens_level, business_params=None, deployment="economy",
+                                         capability_costs=cap_costs, ens_costs=ens_costs)
     impl_cdu = cdu_result.total_capex
     rec_anual = (cdu_result.source_maintenance_opex + cdu_result.capabilities_opex) * 12
 
@@ -1257,65 +1288,91 @@ def main():
         tab_simulation(data, df=df_infra, df_totales=df_totales, impl_cdu=impl_cdu, rec_anual=rec_anual)
 
     with st.expander("Precios y simulación"):
-        with st.container(border=True):
-            st.markdown("**Precios GPU y API**")
-            gc1, gc2 = st.columns(2)
-            with gc1:
-                st.number_input("A100 GPU/h", 0.01, value=_gs("ideal_gpu_price", DEFAULT_IDEAL_GPU_PRICE), key="ideal_gpu_price", step=0.1, format="%.2f",
-                    help="Precio/h de NVIDIA A100 (NC24ads_A100_v4). Determina el coste AKS Ideal.")
-                st.text_input("Modelo API", value=_gs("api_model", DEFAULT_API_MODEL), key="api_model",
-                    help="Nombre del modelo Azure OpenAI de referencia.")
-                st.number_input("Output $/1M tok", 0.0, value=_gs("api_output_price", DEFAULT_API_OUTPUT_PRICE), key="api_output_price", step=0.1, format="%.2f",
-                    help="Precio USD por millón de tokens de salida del modelo API.")
-            with gc2:
-                st.number_input("A10 GPU/h", 0.01, value=_gs("eco_gpu_price", DEFAULT_ECO_GPU_PRICE), key="eco_gpu_price", step=0.1, format="%.2f",
-                    help="Precio/h de NVIDIA A10 (NV12ads_A10_v5). Determina el coste AKS Económico.")
-                st.number_input("Input $/1M tok", 0.0, value=_gs("api_input_price", DEFAULT_API_INPUT_PRICE), key="api_input_price", step=0.1, format="%.2f",
-                    help="Precio USD por millón de tokens de entrada (prompt) del modelo API.")
-                st.number_input("EUR/USD", 0.5, 2.0, value=_gs("eur_usd_rate", DEFAULT_EUR_USD), key="eur_usd_rate", step=0.01, format="%.2f",
-                    help="Tipo de cambio USD→EUR aplicado a tarifas Azure y OpenAI.")
+        tab_infra, tab_cdu = st.tabs(["Infra/Cloud", "CdU"])
 
-        mc1, mc2, mc3 = st.columns(3)
-        with mc1:
-            st.number_input("Iteraciones MC", 100, value=_gs("mc_iterations", 5000), key="mc_iterations", step=100,
-                help="Iteraciones Monte Carlo. Más = más precisos P50/P90, pero más lento.")
-        with mc2:
-            st.number_input("HA factor", 1.0, 2.0, value=_gs("ha_factor", 1.15), key="ha_factor", step=0.01, format="%.2f",
-                help="Factor de alta disponibilidad sobre nodos GPU. 1.15 = +15% redundancia.")
-        with mc3:
-            st.number_input("Overhead pico", 0.0, 1.0, value=_gs("overhead_factor", 0.1), key="overhead_factor", step=0.05, format="%.2f",
-                help="Horas extra sobre ventana pico para escalados imprevistos.")
+        with tab_infra:
+            st.caption("Precios obtenidos de Azure Retail Prices API (West Europe). No configurables.")
+            ic1, ic2, ic3 = st.columns(3)
+            with ic1:
+                st.metric("A100 GPU/h", f"{_gs('ideal_gpu_price', DEFAULT_IDEAL_GPU_PRICE):.2f} €")
+                st.metric("A10 GPU/h", f"{_gs('eco_gpu_price', DEFAULT_ECO_GPU_PRICE):.2f} €")
+                st.metric("Nodo sistema/h", f"{_gs('system_price', DEFAULT_SYSTEM_PRICE):.2f} €")
+            with ic2:
+                st.metric("Modelo API", _gs("api_model", DEFAULT_API_MODEL))
+                st.metric("Input $/1M tok", f"{_gs('api_input_price', DEFAULT_API_INPUT_PRICE):.2f}")
+                st.metric("Output $/1M tok", f"{_gs('api_output_price', DEFAULT_API_OUTPUT_PRICE):.2f}")
+            with ic3:
+                st.metric("EUR/USD", f"{_gs('eur_usd_rate', DEFAULT_EUR_USD):.2f}")
+                st.metric("HA factor", f"{_gs('ha_factor', 1.15):.2f}")
+                st.metric("Overhead pico", f"{_gs('overhead_factor', 0.1):.0%}")
+            st.caption("Rendimiento y costes fijos")
+            ic4, ic5 = st.columns(2)
+            with ic4:
+                st.metric("A100 tok/s", str(_gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT)))
+                st.metric("A10 tok/s", str(_gs("eco_throughput", DEFAULT_ECO_THROUGHPUT)))
+                st.metric("Utilización GPU", f"{_gs('gpu_utilization', DEFAULT_GPU_UTILIZATION):.0%}")
+                st.metric("Factor seguridad", f"{_gs('safety_factor', DEFAULT_SAFETY_FACTOR):.2f}")
+                st.metric("MC iteraciones", str(_gs("mc_iterations", 5000)))
+            with ic5:
+                st.metric("Storage Ideal/mes", f"{int(_gs('ideal_storage', DEFAULT_STORAGE_IDEAL))} €")
+                st.metric("Storage Eco/mes", f"{int(_gs('eco_storage', DEFAULT_STORAGE_ECO))} €")
+                st.metric("LB/mes", f"{int(_gs('ideal_lb', DEFAULT_LB))} €")
+                st.metric("Monitor Ideal/mes", f"{int(_gs('ideal_monitor', DEFAULT_MONITOR_IDEAL))} €")
+                st.metric("Monitor Eco/mes", f"{int(_gs('eco_monitor', DEFAULT_MONITOR_ECO))} €")
+                st.metric("ACR Ideal/mes", f"{int(_gs('ideal_acr', DEFAULT_ACR_IDEAL))} €")
+                st.metric("ACR Eco/mes", f"{int(_gs('eco_acr', DEFAULT_ACR_ECO))} €")
 
-        with st.expander("Detalles máquina e infraestructura"):
-            st.number_input("Nodo sistema/h", 0.01, value=_gs("system_price", DEFAULT_SYSTEM_PRICE), key="system_price", step=0.01, format="%.2f",
-                help="Coste/h del nodo sistema (Standard_D8ds_v5) para ingress y operadores AKS.")
-            c_sz, c_in = st.columns(2)
-            with c_sz:
-                st.caption("Rendimiento")
-                st.number_input("A100 tok/s", 1, value=_gs("ideal_throughput", DEFAULT_IDEAL_THROUGHPUT), key="ideal_throughput", step=10,
-                    help="Throughput en tok/s en A100 con vLLM.")
-                st.number_input("A10 tok/s", 1, value=_gs("eco_throughput", DEFAULT_ECO_THROUGHPUT), key="eco_throughput", step=10,
-                    help="Throughput en tok/s en A10 con vLLM.")
-                st.number_input("Utilización GPU", 0.0, 1.0, value=_gs("gpu_utilization", DEFAULT_GPU_UTILIZATION), key="gpu_utilization", step=0.05,
-                    help="Fracción de capacidad GPU aprovechada de media.")
-                st.number_input("Factor seguridad", 0.0, 2.0, value=_gs("safety_factor", DEFAULT_SAFETY_FACTOR), key="safety_factor", step=0.05,
-                    help="Margen extra en dimensionado de nodos GPU.")
-            with c_in:
-                st.caption("Costes fijos mensuales")
-                st.number_input("Storage Ideal", 0, value=int(_gs("ideal_storage", DEFAULT_STORAGE_IDEAL)), key="ideal_storage", step=10,
-                    help="Almacenamiento mensual (OS disks + PVC) AKS Ideal.")
-                st.number_input("Storage Eco", 0, value=int(_gs("eco_storage", DEFAULT_STORAGE_ECO)), key="eco_storage", step=10,
-                    help="Almacenamiento mensual AKS Económico.")
-                st.number_input("LB", 0, value=int(_gs("ideal_lb", DEFAULT_LB)), key="ideal_lb", step=5,
-                    help="Load Balancer + IP pública mensual.")
-                st.number_input("Monitor Ideal", 0, value=int(_gs("ideal_monitor", DEFAULT_MONITOR_IDEAL)), key="ideal_monitor", step=10,
-                    help="Monitor + Log Analytics mensual AKS Ideal.")
-                st.number_input("Monitor Eco", 0, value=int(_gs("eco_monitor", DEFAULT_MONITOR_ECO)), key="eco_monitor", step=10,
-                    help="Monitor + Log Analytics mensual AKS Económico.")
-                st.number_input("ACR Ideal", 0, value=int(_gs("ideal_acr", DEFAULT_ACR_IDEAL)), key="ideal_acr", step=10,
-                    help="ACR + caché/cola mensual AKS Ideal.")
-                st.number_input("ACR Eco", 0, value=int(_gs("eco_acr", DEFAULT_ACR_ECO)), key="eco_acr", step=10,
-                    help="ACR + caché/cola mensual AKS Económico.")
+        with tab_cdu:
+            from usecase import SOURCE_INTEGRATION_TABLE, CAPABILITY_COSTS, ENS_COSTS, FREQUENCY_MULTIPLIERS
+            st.caption("Costes de integración de fuentes — configurables")
+            src_labels = {"sharepoint":"SharePoint/Alfresco","database":"BD Oracle/SQL",
+                         "web_scraping":"Web Scraping","api":"API REST","pdf_dynamic":"PDF Dinámico"}
+            cmp_labels = {"low":"Baja","medium":"Media","high":"Alta"}
+            for sk, sl in src_labels.items():
+                with st.container(border=True):
+                    st.markdown(f"**{sl}**")
+                    cols = st.columns(3)
+                    for i, cmp in enumerate(["low","medium","high"]):
+                        key = f"_cdu_src_{sk}_{cmp}"
+                        default = SOURCE_INTEGRATION_TABLE[sk][cmp]
+                        with cols[i]:
+                            st.number_input(
+                                f"{cmp_labels[cmp]}", 0, 100000,
+                                value=_gs(key, default), step=500, key=key,
+                                help=f"Coste de integración {sl} - {cmp_labels[cmp]}"
+                            )
+
+            st.markdown("---")
+            st.caption("Costes de capacidades — configurables")
+            cap_labels = {"agentic_ai":"IA Agéntica","anonymization":"Anonimización","sso":"Autenticación SSO"}
+            for ck, cl in cap_labels.items():
+                with st.container(border=True):
+                    st.markdown(f"**{cl}**")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.number_input("CAPEX", 0, 100000,
+                            value=_gs(f"_cdu_cap_{ck}_capex", CAPABILITY_COSTS[ck]["capex"]), step=500, key=f"_cdu_cap_{ck}_capex")
+                    with c2:
+                        st.number_input("OPEX/mes", 0, 10000,
+                            value=_gs(f"_cdu_cap_{ck}_opex", CAPABILITY_COSTS[ck]["opex_monthly"]), step=100, key=f"_cdu_cap_{ck}_opex")
+
+            st.markdown("---")
+            st.caption("Costes ENS — configurables")
+            ens_labels = {"none":"Ninguno","basic":"Básico","medium":"Medio","high":"Alto"}
+            cols_ens = st.columns(4)
+            for i, (ek, el) in enumerate(ens_labels.items()):
+                with cols_ens[i]:
+                    st.number_input(f"ENS {el}", 0, 50000,
+                        value=_gs(f"_cdu_ens_{ek}_capex", ENS_COSTS[ek]["capex"]), step=500, key=f"_cdu_ens_{ek}_capex")
+
+            st.markdown("---")
+            st.caption("Multiplicadores de frecuencia de actualización — configurables")
+            cols_freq = st.columns(len(FREQUENCY_MULTIPLIERS))
+            for i, (fk, fv) in enumerate(FREQUENCY_MULTIPLIERS.items()):
+                freq_labels = {"realtime":"Tiempo real","hourly":"Cada hora","daily":"Diaria","weekly":"Semanal","monthly":"Mensual"}
+                with cols_freq[i]:
+                    st.number_input(freq_labels.get(fk, fk), 0.5, 2.0,
+                        value=_gs(f"_cdu_freq_{fk}", fv), step=0.01, format="%.2f", key=f"_cdu_freq_{fk}")
 
     with st.container(border=True):
         st.markdown("**Azure Pricing**")
